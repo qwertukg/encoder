@@ -6,25 +6,28 @@ import com.itextpdf.kernel.pdf.PdfWriter
 import com.itextpdf.kernel.pdf.canvas.PdfCanvas
 import kotlin.math.PI
 import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 
 class SlidingWindowAngleEncoder(
     // arcWidthRad -> stepRatio
     val layers: Map<Double, Double> = linkedMapOf(
-        (90.0      * PI / 180.0) to 0.6,
-        (45.0      * PI / 180.0) to 0.6,
-        (22.5      * PI / 180.0) to 0.6,
-        (11.25     * PI / 180.0) to 0.6,
-        (5.625     * PI / 180.0) to 0.6,
-        (2.8125    * PI / 180.0) to 0.6, // with 256 bit - sens step ~<=1°
+        (90.0      * PI / 180.0) to 0.5,
+        (45.0      * PI / 180.0) to 0.5,
+        (22.5      * PI / 180.0) to 0.5,
+        (11.25     * PI / 180.0) to 0.5,
+        (5.625     * PI / 180.0) to 0.5,
+        (2.8125    * PI / 180.0) to 0.5, // with 256 bit - sens step ~<=1°
 //        (1.40625   * PI / 180.0) to 0.6,
 //        (0.703125  * PI / 180.0) to 0.6,
     ),
     val codeSize: Int = 256
 ) {
     private val twoPi = 2.0 * PI
+    val L = layers.size - 0
 
     /** Разница углов в (-π, π]. Удобно для проверки симметричного окна вокруг центра. */
     private fun angDiff(a: Double): Double {
@@ -45,7 +48,6 @@ class SlidingWindowAngleEncoder(
         val out = IntArray(codeSize)
         var offset = 0
         var layerIdx = 0
-        val L = layers.size - 1
 
         // Примечание: порядок обхода Map зависит от реализации.
         // Для стабильного порядка слоёв используйте LinkedHashMap или mapOf(...) в желаемой последовательности.
@@ -81,19 +83,15 @@ class SlidingWindowAngleEncoder(
      *
      * @param outputPath путь к PDF
      * @param markAngleRadians опционально: угол, для которого подсветить активные детекторы (толще/ярче)
-     * @param pageSize размер страницы (по умолчанию A4)
-     * @param margin отступ от границ страницы (pt)
      * @param radius радиус круга (pt)
      */
     fun drawDetectorsPdf(
         outputPath: String,
         markAngleRadians: Double? = null,
-        pageSize: PageSize = PageSize.A4,
-        margin: Float = 36f,
-        radius: Float = 220f
+        radius: Float = 200f
     ) {
         PdfDocument(PdfWriter(outputPath)).use { pdf ->
-            val page = pdf.addNewPage(pageSize)
+            val page = pdf.addNewPage(PageSize.A4)
             val canvas = PdfCanvas(page)
 
             // Геометрия страницы
@@ -122,7 +120,6 @@ class SlidingWindowAngleEncoder(
             val activeByLayer = mutableSetOf<Pair<Int, Int>>() // (layerIdx, detIdx)
             if (markAngleRadians != null) {
                 var off = 0
-                val L = max(layers.size, 1)
                 var k = 0
                 for ((w, r) in layers) {
                     val d = w * r
@@ -142,7 +139,6 @@ class SlidingWindowAngleEncoder(
             }
 
             // Рисуем дуги детекторов каждого слоя
-            val L = max(layers.size, 1)
             var layerIdx = 0
             var rOffset = 15
             for ((arcWidthRad, stepRatio) in layers) {
@@ -160,51 +156,29 @@ class SlidingWindowAngleEncoder(
 
                 for (i in 0 until n) {
                     val center = (i * d + phase) % twoPi
-                    var start = center - w / 2.0  // рад
-                    var extent = w                // рад (всегда положительный)
+                    val start = center - w / 2.0  // рад
+                    val extent = w                // рад (всегда положительный)
 
                     // Нормализуем в градусы
-                    var startDeg = Math.toDegrees(start)
-                    var extentDeg = Math.toDegrees(extent)
+                    val startDeg = Math.toDegrees(start)
+                    val extentDeg = Math.toDegrees(extent)
 
                     // Если дуга пересекает 360/0 — разбиваем на две
-                    val endDeg = startDeg + extentDeg
                     canvas.setStrokeColor(color)
                     val isActive = (layerIdx to i) in activeByLayer
 
                     canvas.setLineWidth(if (isActive) 2.2f else 1.0f)
-
-                    if (endDeg <= 360.0 && startDeg >= 0.0) {
-                        // одна дуга без разрыва
-                        canvas.arc(x1, y1, x2, y2, startDeg, extentDeg).stroke()
-//                        drawArcRotated(canvas,x1, y1, x2, y2, startDeg, extentDeg)
-                    } else {
-                        // разрыв: нарисуем две части
-                        // Нормализация: сводим startDeg в [0,360)
-                        val s = ((startDeg % 360.0) + 360.0) % 360.0
-                        val e = extentDeg
-                        val first = min(360.0 - s, e)
-                        val second = max(0.0, e - first)
-                        if (first > 0.0) {
-                            canvas.arc(x1, y1, x2, y2, s, first).stroke()
-//                            drawArcRotated(canvas,x1, y1, x2, y2, s, first)
-
-                        }
-                        if (second > 0.0) {
-                            canvas.arc(x1, y1, x2, y2, 0.0, second).stroke()
-//                            drawArcRotated(canvas,x1, y1, x2, y2, 0.0, second)
-                        }
-                    }
+                    drawArcRotated(canvas,x1, y1, x2, y2, startDeg, extentDeg, color = color)
                 }
                 layerIdx++
-                rOffset+=7
+                rOffset+=10
             }
 
             // (Необязательно) Радиальная метка угла markAngleRadians
             if (markAngleRadians != null) {
                 val a = markAngleRadians
-                val dx = (radius * kotlin.math.cos(a)).toFloat()
-                val dy = (radius * kotlin.math.sin(a)).toFloat()
+                val dx = (radius * cos(a)).toFloat()
+                val dy = (radius * sin(a)).toFloat()
                 canvas.setStrokeColor(DeviceRgb(0, 0, 0))
                     .setLineWidth(0.8f)
                     .moveTo(cx.toDouble(), cy.toDouble())
@@ -214,14 +188,52 @@ class SlidingWindowAngleEncoder(
         }
     }
 
+    /**
+     * Рисует дугу, у которой радиус плавно увеличивается на dR от начала к концу.
+     *
+     * @param canvas PdfCanvas для рисования
+     * @param x1,y1,x2,y2 прямоугольник описывающий базовую окружность (bbox)
+     * @param startDeg начальный угол (градусы)
+     * @param extentDeg длина дуги (градусы)
+     * @param dR на сколько увеличить радиус к концу дуги
+     * @param segments сколько частей использовать для аппроксимации (чем больше — тем глаже)
+     * @param color цвет линии/заливки
+     */
     fun drawArcRotated(
         canvas: PdfCanvas,
         x1: Double, y1: Double, x2: Double, y2: Double,
         startDeg: Double, extentDeg: Double,
-        rotationDeg: Double
+        dR: Double = 5.0,
+        segments: Int = 60,
+        color: DeviceRgb = DeviceRgb(52, 120, 246)
     ) {
-        val start = startDeg + rotationDeg
-        canvas.arc(x1, y1, x2, y2, start, extentDeg).stroke()
+        val cx = (x1 + x2) / 2.0
+        val cy = (y1 + y2) / 2.0
+        val baseR = (x2 - x1) / 2.0
+
+        canvas.setStrokeColor(color)
+
+        val step = extentDeg / segments
+        for (s in 0 until segments) {
+            val a0 = startDeg + s * step
+            val a1 = a0 + step
+            val t0 = s.toDouble() / segments
+            val t1 = (s + 1).toDouble() / segments
+
+            val r0 = baseR + dR * t0
+            val r1 = baseR + dR * t1
+
+            val x0 = cx + r0 * cos(Math.toRadians(a0))
+            val y0 = cy + r0 * sin(Math.toRadians(a0))
+            val x1p = cx + r1 * cos(Math.toRadians(a1))
+            val y1p = cy + r1 * sin(Math.toRadians(a1))
+
+            if (s == 0) {
+                canvas.moveTo(x0, y0)
+            }
+            canvas.lineTo(x1p, y1p)
+        }
+        canvas.stroke()
     }
 
 }
