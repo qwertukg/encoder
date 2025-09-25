@@ -139,7 +139,7 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
         if (markAngleDeg != null) {
             val layerCount = layers.size.coerceAtLeast(1)
             layers.forEachIndexed { layerIndex, layer ->
-                val centerStepRadians = fullCircleInRadians / layer.detectorCount
+                val centerStepRadians = (layer.arcLengthDegrees) * Math.PI / 180.0
                 val centerStepDeg = Math.toDegrees(centerStepRadians)
                 val layerPhaseRadians = (layerIndex.toDouble() / layerCount) * centerStepRadians
                 val layerPhaseDeg = Math.toDegrees(layerPhaseRadians)
@@ -164,7 +164,7 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
         layers.forEach { layer ->
             val color = layerColors[layerIndex % layerColors.size]
 
-            val centerStepRadians = fullCircleInRadians / layer.detectorCount
+            val centerStepRadians = (layer.arcLengthDegrees) * Math.PI / 180.0
             val centerStepDeg = Math.toDegrees(centerStepRadians)
             val layerPhaseRadians = (layerIndex.toDouble() / layerCount) * centerStepRadians
             val layerPhaseDeg = Math.toDegrees(layerPhaseRadians)
