@@ -1,8 +1,4 @@
-package kz.qwertukg
-
-import SlidingWindowAngleEncoder
 import SlidingWindowAngleEncoder.Layer
-import drawDetectorsPdf
 import kotlin.math.PI
 
 //TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
