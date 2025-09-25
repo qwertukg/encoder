@@ -1,239 +1,117 @@
-import com.itextpdf.kernel.colors.DeviceRgb
-import com.itextpdf.kernel.geom.AffineTransform
-import com.itextpdf.kernel.geom.PageSize
-import com.itextpdf.kernel.pdf.PdfDocument
-import com.itextpdf.kernel.pdf.PdfWriter
-import com.itextpdf.kernel.pdf.canvas.PdfCanvas
 import kotlin.math.PI
-import kotlin.math.ceil
-import kotlin.math.cos
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.sin
 
-
+/**
+ * SlidingWindowAngleEncoder — версия с полностью развёрнутыми именами и комментариями.
+ *
+ * СОГЛАШЕНИЕ (contract) — внутри НЕТ проверок корректности входных данных:
+ * 1) Сумма по слоям: Σ layers[k].detectorCount <= codeSizeInBits — иначе индекс выйдет за границы массива.
+ * 2) Для каждого слоя: arcLengthDegrees > 0; detectorCount > 0; overlapFraction >= 0.
+ * 3) Порядок слоёв значим (List сохраняет порядок конкатенации битов).
+ * 4) Итоговая ширина окна слоя: windowWidthDegrees = arcLengthDegrees * (1 + overlapFraction).
+ * 5) Шаг центров детекторов: centerStepRadians = 2π / detectorCount (равномерное покрытие круга).
+ * 6) Фаза слоя k: layerPhaseRadians = (k / layerCount) * centerStepRadians; первый слой стартует с 0.
+ */
 class SlidingWindowAngleEncoder(
-    // arcWidthRad -> stepRatio
-    val layers: Map<Double, Double> = linkedMapOf(
-        (90.0      * PI / 180.0) to 0.5,
-        (45.0      * PI / 180.0) to 0.5,
-        (22.5      * PI / 180.0) to 0.5,
-        (11.25     * PI / 180.0) to 0.5,
-        (5.625     * PI / 180.0) to 0.5,
-        (2.8125    * PI / 180.0) to 0.5, // with 256 bit - sens step ~<=1°
-//        (1.40625   * PI / 180.0) to 0.6,
-//        (0.703125  * PI / 180.0) to 0.6,
+    /** Конфигурации слоёв (см. data class Layer ниже). */
+    val layers: List<Layer> = listOf(
+        Layer(arcLengthDegrees = 90.0,   detectorCount = 8,   overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 45.0,   detectorCount = 16,  overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 22.5,   detectorCount = 32,  overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 11.25,  detectorCount = 64,  overlapFraction = 0.4)
     ),
-    val codeSize: Int = 256
+    /** Размер результирующего кода в битах. */
+    val codeSizeInBits: Int = 256
 ) {
-    private val twoPi = 2.0 * PI
-    val L = layers.size - 0
-
-    /** Разница углов в (-π, π]. Удобно для проверки симметричного окна вокруг центра. */
-    private fun angDiff(a: Double): Double {
-        var x = (a + PI) % (2.0 * PI)
-        if (x < 0.0) x += 2.0 * PI
-        return x - PI
-    }
-
-    /** Печать кода в виде массива из 0 и 1. */
-    private fun printCode(bits: IntArray, a: Double) {
-        println(bits.joinToString(prefix = "[", postfix = "]", separator = "") + ":${a * 180.0 / PI}")
-    }
-
     /**
-     * Закодировать угол (Double в радианах) методом «скользящего окна».
+     * Параметры одного слоя детекторов.
+     * @param arcLengthDegrees   базовая длина дуги (в градусах) без учёта перекрытия
+     * @param detectorCount      количество детекторов (центров) по кругу; шаг центров = 360° / detectorCount
+     * @param overlapFraction    доля перекрытия (например, 0.4 → итоговая ширина = arcLengthDegrees * 1.4)
      */
-    fun encode(angleRadians: Double): IntArray {
-        val out = IntArray(codeSize)
-        var offset = 0
-        var layerIdx = 0
+    data class Layer(val arcLengthDegrees: Double, val detectorCount: Int, val overlapFraction: Double)
 
-        // Примечание: порядок обхода Map зависит от реализации.
-        // Для стабильного порядка слоёв используйте LinkedHashMap или mapOf(...) в желаемой последовательности.
-        for ((arcWidthRad, stepRatio) in layers) {
-            val w = arcWidthRad
-            val d = w * stepRatio
-            val n = ceil(twoPi / d).toInt().coerceAtLeast(1)
-            val halfW = w / 2.0
-
-            // фаза слоя циклически «проворачивается» по числу слоёв
-            val phase = (layerIdx % L) * d / L
-
-            for (i in 0 until n) {
-                val center = (i * d + phase)
-                val diff = angDiff(angleRadians - center)
-                if (diff >= -halfW && diff < halfW) {
-                    val idx = offset + i
-                    if (idx in 0 until codeSize) out[idx] = 1
-                }
-            }
-            offset += n
-            layerIdx++
-        }
-
-        // Печать результата перед возвратом
-        printCode(out, angleRadians)
-        return out
-    }
-
+    /** Полный круг в радианах (2π). */
+    val fullCircleInRadians: Double = 2.0 * PI
 
     /**
-     * Нарисовать дуги детекторов всех слоёв на круге в PDF.
+     * Последний сгенерированный код (обновляется при каждом encode).
+     * Сделано var + private set, чтобы извне читался, но не изменялся.
+     */
+    var lastEncodedCode: IntArray = IntArray(0)
+        private set
+
+    /**
+     * Кодирует угол (в радианах) в разряжённый битовый вектор фиксированной длины [codeSizeInBits].
      *
-     * @param outputPath путь к PDF
-     * @param markAngleRadians опционально: угол, для которого подсветить активные детекторы (толще/ярче)
-     * @param radius радиус круга (pt)
-     */
-    fun drawDetectorsPdf(
-        outputPath: String,
-        markAngleRadians: Double? = null,
-        radius: Float = 200f
-    ) {
-        PdfDocument(PdfWriter(outputPath)).use { pdf ->
-            val page = pdf.addNewPage(PageSize.A4)
-            val canvas = PdfCanvas(page)
-
-            // Геометрия страницы
-            val cx = page.pageSize.width  / 2f
-            val cy = page.pageSize.height / 2f
-
-            // Базовый круг
-            canvas.setLineWidth(1f)
-                .setStrokeColor(DeviceRgb(0, 0, 0))
-                .circle(cx.toDouble(), cy.toDouble(), radius.toDouble())
-                .stroke()
-
-            // Палитра для слоёв
-            val colors = listOf(
-                DeviceRgb(52, 120, 246),
-                DeviceRgb(34, 197, 94),
-                DeviceRgb(234, 179, 8),
-                DeviceRgb(239, 68, 68),
-                DeviceRgb(168, 85, 247),
-                DeviceRgb(16, 185, 129),
-                DeviceRgb(59, 130, 246),
-                DeviceRgb(245, 158, 11)
-            )
-
-            // Подсветка активных детекторов (если задан markAngleRadians)
-            val activeByLayer = mutableSetOf<Pair<Int, Int>>() // (layerIdx, detIdx)
-            if (markAngleRadians != null) {
-                var off = 0
-                var k = 0
-                for ((w, r) in layers) {
-                    val d = w * r
-                    val n = ceil(twoPi / d).toInt().coerceAtLeast(1)
-                    val halfW = w / 2.0
-                    val phase = (k % L) * d / L
-                    for (i in 0 until n) {
-                        val center = (i * d + phase) % twoPi
-                        val diff = angDiff(markAngleRadians - center)
-                        if (diff >= -halfW && diff < halfW) {
-                            activeByLayer += k to i
-                        }
-                    }
-                    off += n
-                    k++
-                }
-            }
-
-            // Рисуем дуги детекторов каждого слоя
-            var layerIdx = 0
-            var rOffset = 15
-            for ((arcWidthRad, stepRatio) in layers) {
-                val color = colors[layerIdx % colors.size]
-                val w = arcWidthRad
-                val d = w * stepRatio
-                val n = ceil(twoPi / d).toInt().coerceAtLeast(1)
-                val phase = (layerIdx % L) * d / L
-
-                // прямоугольник окружности для arc (iText7: arc(x1,y1,x2,y2,startDeg,extentDeg))
-                val x1 = (cx - (radius + rOffset)).toDouble()
-                val y1 = (cy - (radius + rOffset)).toDouble()
-                val x2 = (cx + (radius + rOffset)).toDouble()
-                val y2 = (cy + (radius + rOffset)).toDouble()
-
-                for (i in 0 until n) {
-                    val center = (i * d + phase) % twoPi
-                    val start = center - w / 2.0  // рад
-                    val extent = w                // рад (всегда положительный)
-
-                    // Нормализуем в градусы
-                    val startDeg = Math.toDegrees(start)
-                    val extentDeg = Math.toDegrees(extent)
-
-                    // Если дуга пересекает 360/0 — разбиваем на две
-                    canvas.setStrokeColor(color)
-                    val isActive = (layerIdx to i) in activeByLayer
-
-                    canvas.setLineWidth(if (isActive) 2.2f else 1.0f)
-                    drawArcRotated(canvas,x1, y1, x2, y2, startDeg, extentDeg, color = color)
-                }
-                layerIdx++
-                rOffset+=10
-            }
-
-            // (Необязательно) Радиальная метка угла markAngleRadians
-            if (markAngleRadians != null) {
-                val a = markAngleRadians
-                val dx = (radius * cos(a)).toFloat()
-                val dy = (radius * sin(a)).toFloat()
-                canvas.setStrokeColor(DeviceRgb(0, 0, 0))
-                    .setLineWidth(0.8f)
-                    .moveTo(cx.toDouble(), cy.toDouble())
-                    .lineTo((cx + dx).toDouble(), (cy + dy).toDouble())
-                    .stroke()
-            }
-        }
-    }
-
-    /**
-     * Рисует дугу, у которой радиус плавно увеличивается на dR от начала к концу.
+     * Логика:
+     *  - для каждого слоя с индексом layerIndex считаем:
+     *      windowWidthRadians = toRad(arcLengthDegrees * (1 + overlapFraction))   // итоговая ширина окна (рад)
+     *      centerStepRadians  = 2π / detectorCount                                // шаг центров (рад)
+     *      layerPhaseRadians  = (layerIndex / layerCount) * centerStepRadians     // фазовый сдвиг слоя (рад)
+     *  - для каждого детектора с индексом detectorIndex:
+     *      detectorCenterRadians = detectorIndex * centerStepRadians + layerPhaseRadians
+     *  - детектор активен, если:
+     *      normalizedAngularDifference(angleInRadians - detectorCenterRadians) ∈ [-windowWidthRadians/2, windowWidthRadians/2)
+     *  - активные детекторы «зажигают» биты по индексам:
+     *      globalBitOffset + detectorIndex; globalBitOffset накапливается по слоям
      *
-     * @param canvas PdfCanvas для рисования
-     * @param x1,y1,x2,y2 прямоугольник описывающий базовую окружность (bbox)
-     * @param startDeg начальный угол (градусы)
-     * @param extentDeg длина дуги (градусы)
-     * @param dR на сколько увеличить радиус к концу дуги
-     * @param segments сколько частей использовать для аппроксимации (чем больше — тем глаже)
-     * @param color цвет линии/заливки
+     * ВНИМАНИЕ: никаких защит от выхода за границы массива НЕТ (см. контракт сверху).
+     *
+     * @param angleInRadians угол в радианах
+     * @return массив IntArray из 0/1 длиной [codeSizeInBits]
      */
-    fun drawArcRotated(
-        canvas: PdfCanvas,
-        x1: Double, y1: Double, x2: Double, y2: Double,
-        startDeg: Double, extentDeg: Double,
-        dR: Double = 5.0,
-        segments: Int = 60,
-        color: DeviceRgb = DeviceRgb(52, 120, 246)
-    ) {
-        val cx = (x1 + x2) / 2.0
-        val cy = (y1 + y2) / 2.0
-        val baseR = (x2 - x1) / 2.0
+    fun encode(angleInRadians: Double): IntArray {
+        val encodedBits = IntArray(codeSizeInBits)
+        var globalBitOffset = 0
+        val layerCount = layers.size
 
-        canvas.setStrokeColor(color)
+        // нормализуем угол один раз в [0, 2π)
+        val twoPi = 2.0 * PI
+        var angleWrapped = angleInRadians % twoPi
+        if (angleWrapped < 0.0) angleWrapped += twoPi
 
-        val step = extentDeg / segments
-        for (s in 0 until segments) {
-            val a0 = startDeg + s * step
-            val a1 = a0 + step
-            val t0 = s.toDouble() / segments
-            val t1 = (s + 1).toDouble() / segments
+        layers.forEachIndexed { layerIndex, layer ->
+            val windowWidthRadians = (layer.arcLengthDegrees * (1.0 + layer.overlapFraction)) * PI / 180.0
+            val halfWindowWidthRadians = windowWidthRadians / 2.0
+            val centerStepRadians = twoPi / layer.detectorCount
+            val layerPhaseRadians = (layerIndex.toDouble() / layerCount) * centerStepRadians
 
-            val r0 = baseR + dR * t0
-            val r1 = baseR + dR * t1
+            for (detectorIndex in 0 until layer.detectorCount) {
+                val center = detectorIndex * centerStepRadians + layerPhaseRadians
+                val startRaw = center - halfWindowWidthRadians
+                val endRaw   = center + halfWindowWidthRadians
 
-            val x0 = cx + r0 * cos(Math.toRadians(a0))
-            val y0 = cy + r0 * sin(Math.toRadians(a0))
-            val x1p = cx + r1 * cos(Math.toRadians(a1))
-            val y1p = cy + r1 * sin(Math.toRadians(a1))
+                // сворачиваем границы в [0, 2π)
+                var start = startRaw % twoPi; if (start < 0.0) start += twoPi
+                var end   = endRaw   % twoPi; if (end   < 0.0) end   += twoPi
 
-            if (s == 0) {
-                canvas.moveTo(x0, y0)
+                // правая граница ИСКЛЮЧИТСЯ (как и раньше), левая включается
+                val hit = if (start <= end) {
+                    angleWrapped >= start && angleWrapped < end
+                } else {
+                    // окно пересекает 0: два куска
+                    angleWrapped >= start || angleWrapped < end
+                }
+
+                if (hit) {
+                    encodedBits[globalBitOffset + detectorIndex] = 1
+                }
             }
-            canvas.lineTo(x1p, y1p)
+            globalBitOffset += layer.detectorCount
         }
-        canvas.stroke()
-    }
 
+        lastEncodedCode = encodedBits
+        return encodedBits
+    }
 }
+
+/* -----------------------------
+   Пример использования (опционально):
+
+fun main() {
+    val encoder = SlidingWindowAngleEncoder()
+    val angleRadians = 200.0 * PI / 180.0
+    val code = encoder.encode(angleRadians)
+    println(code.joinToString(""))
+}
+----------------------------- */
