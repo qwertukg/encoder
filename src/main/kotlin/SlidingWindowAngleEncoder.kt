@@ -8,7 +8,7 @@ import kotlin.math.PI
  * 2) Для каждого слоя: arcLengthDegrees > 0; detectorCount > 0; overlapFraction >= 0.
  * 3) Порядок слоёв значим (List сохраняет порядок конкатенации битов).
  * 4) Итоговая ширина окна слоя: windowWidthDegrees = arcLengthDegrees * (1 + overlapFraction).
- * 5) Шаг центров детекторов: centerStepRadians = 2π / detectorCount (равномерное покрытие круга).
+ * 5) Шаг центров детекторов: centerStepRadians = toRad(arcLengthDegrees) (поворот на длину дуги слоя).
  * 6) Фаза слоя k: layerPhaseRadians = (k / layerCount) * centerStepRadians; первый слой стартует с 0.
  */
 class SlidingWindowAngleEncoder(
@@ -25,7 +25,7 @@ class SlidingWindowAngleEncoder(
     /**
      * Параметры одного слоя детекторов.
      * @param arcLengthDegrees   базовая длина дуги (в градусах) без учёта перекрытия
-     * @param detectorCount      количество детекторов (центров) по кругу; шаг центров = 360° / detectorCount
+     * @param detectorCount      количество детекторов (центров) по кругу; шаг центров = arcLengthDegrees
      * @param overlapFraction    доля перекрытия (например, 0.4 → итоговая ширина = arcLengthDegrees * 1.4)
      */
     data class Layer(val arcLengthDegrees: Double, val detectorCount: Int, val overlapFraction: Double)
@@ -44,10 +44,10 @@ class SlidingWindowAngleEncoder(
      * Кодирует угол (в радианах) в разряжённый битовый вектор фиксированной длины [codeSizeInBits].
      *
      * Логика:
-     *  - для каждого слоя с индексом layerIndex считаем:
-     *      windowWidthRadians = toRad(arcLengthDegrees * (1 + overlapFraction))   // итоговая ширина окна (рад)
-     *      centerStepRadians  = 2π / detectorCount                                // шаг центров (рад)
-     *      layerPhaseRadians  = (layerIndex / layerCount) * centerStepRadians     // фазовый сдвиг слоя (рад)
+         *  - для каждого слоя с индексом layerIndex считаем:
+         *      windowWidthRadians = toRad(arcLengthDegrees * (1 + overlapFraction))   // итоговая ширина окна (рад)
+         *      centerStepRadians  = toRad(arcLengthDegrees)                           // шаг центров (рад)
+         *      layerPhaseRadians  = (layerIndex / layerCount) * centerStepRadians     // фазовый сдвиг слоя (рад)
      *  - для каждого детектора с индексом detectorIndex:
      *      detectorCenterRadians = detectorIndex * centerStepRadians + layerPhaseRadians
      *  - детектор активен, если:
@@ -73,7 +73,7 @@ class SlidingWindowAngleEncoder(
         layers.forEachIndexed { layerIndex, layer ->
             val windowWidthRadians = (layer.arcLengthDegrees * (1.0 + layer.overlapFraction)) * PI / 180.0
             val halfWindowWidthRadians = windowWidthRadians / 2.0
-            val centerStepRadians = twoPi / layer.detectorCount
+            val centerStepRadians = (layer.arcLengthDegrees) * PI / 180.0
             val layerPhaseRadians = (layerIndex.toDouble() / layerCount) * centerStepRadians
 
             for (detectorIndex in 0 until layer.detectorCount) {
