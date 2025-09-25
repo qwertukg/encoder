@@ -16,13 +16,19 @@ import kotlin.math.PI
 
 fun main() {
     val encoder = SlidingWindowAngleEncoder(listOf(
-        Layer(arcLengthDegrees = 90.0,   detectorCount = 2,   overlapFraction = 0.4),
-//        Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
-//        Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
-//        Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4)
+        Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4)
     ))
-    val angleRadians = 200.0 * PI / 180.0
-    val code = encoder.encode(angleRadians)
-//    println(code.joinToString(""))
+
+    (0..359).forEach {
+        val angleRadians = it * PI / 180.0
+        val code = encoder.encode(angleRadians)
+        println(code.joinToString("", "[", "]"))
+    }
+
     encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = PI)
+
+
 }
