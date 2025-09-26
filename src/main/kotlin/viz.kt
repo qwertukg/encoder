@@ -134,6 +134,19 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
         // Нормализованный угол подсветки (если задан)
         val markAngleDeg = markAngleRadians?.let { normalizeDegrees0to360(Math.toDegrees(it)) }
 
+        // Печатаем битовый код «палочками» согласно канону визуализации из DAML
+        val codeForPrint = when {
+            markAngleRadians != null -> encode(markAngleRadians)
+            lastEncodedCode.isNotEmpty() -> lastEncodedCode
+            else -> IntArray(0)
+        }
+        if (codeForPrint.isNotEmpty()) {
+            val sticksLine = buildString(codeForPrint.size) {
+                codeForPrint.forEach { bit -> append(if (bit == 1) '|' else ' ') }
+            }
+            println(sticksLine)
+        }
+
         // Подсветка активных детекторов (слой, индекс) по правилу «интервального попадания»
         val activeDetectors = mutableSetOf<Pair<Int, Int>>()
         if (markAngleDeg != null) {
