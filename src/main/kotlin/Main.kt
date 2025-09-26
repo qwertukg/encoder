@@ -21,6 +21,12 @@ fun main() {
     val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
     val results = backgroundCorrelationAnalyzer.analyzeWithAngles(encoder.codes, 180.0)
 
+    encoder.drawDetectorsPdf(
+        "./detectors.pdf",
+        markAngleRadians = PI,
+        correlationProfile = results.correlationProfile
+    )
+
     println("Done")
 
 }

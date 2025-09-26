@@ -23,8 +23,16 @@ class BackgroundCorrelationAnalyzer {
     data class Stats(
         val meanCorrelation: Double,
         val maxCorrelation: Double,
-        val pairCount: Long
+        val pairCount: Long,
+        val correlationProfile: CorrelationProfile? = null
     )
+
+    data class CorrelationProfile(
+        val referenceAngleDegrees: Double,
+        val points: List<Point>
+    ) {
+        data class Point(val angleDegrees: Double, val correlation: Double)
+    }
 
     /**
      * Рассчитывает фоновый уровень корреляции для заданной коллекции кодов.
@@ -85,17 +93,18 @@ class BackgroundCorrelationAnalyzer {
      */
     fun analyzeWithAngles(codes: Collection<Pair<Double, IntArray>>, angle: Double): Stats {
         val stats = analyze(codes.map { it.second })
-        printCorrelationProfile(referenceAngleDegrees = angle, codesWithAngles = codes)
-        return stats
+        val profile = buildCorrelationProfile(referenceAngleDegrees = angle, codesWithAngles = codes)
+        profile?.let { printCorrelationProfile(it) }
+        return stats.copy(correlationProfile = profile)
     }
 
-    private fun printCorrelationProfile(
+    private fun buildCorrelationProfile(
         referenceAngleDegrees: Double,
         codesWithAngles: Collection<Pair<Double, IntArray>>
-    ) {
+    ): CorrelationProfile? {
         if (codesWithAngles.isEmpty()) {
             println("Нет кодов для построения профиля корреляции.")
-            return
+            return null
         }
 
         data class AngleEntry(val angleDegrees: Double, val code: IntArray, val activation: Int)
@@ -113,7 +122,7 @@ class BackgroundCorrelationAnalyzer {
 
         if (reference == null) {
             println("Не найден код, соответствующий нулевому углу.")
-            return
+            return null
         }
 
         val referenceCode = reference.code
@@ -126,14 +135,26 @@ class BackgroundCorrelationAnalyzer {
             entry.angleDegrees to correlation
         }
 
-        val maxCorrelation = profile.maxOfOrNull { it.second } ?: 0.0
+        val points = profile.map { (angleDegrees, correlation) ->
+            CorrelationProfile.Point(angleDegrees, correlation)
+        }
+
+        return CorrelationProfile(reference.angleDegrees, points)
+    }
+
+    private fun printCorrelationProfile(profile: CorrelationProfile) {
+        val maxCorrelation = profile.points.maxOfOrNull { it.correlation } ?: 0.0
         val scale = if (maxCorrelation == 0.0) 0.0 else 40.0 / maxCorrelation
 
         println(
-            "Профиль корреляции для угла ${formatAngle(reference.angleDegrees)}°:"
+            "Профиль корреляции для угла ${formatAngle(profile.referenceAngleDegrees)}°:"
         )
 
-        profile.forEach { (angleDegrees, correlation) ->
+        profile.points
+            .sortedBy { it.angleDegrees }
+            .forEach { point ->
+                val angleDegrees = point.angleDegrees
+                val correlation = point.correlation
             val barLength = if (scale == 0.0) 0 else (correlation * scale).roundToInt()
             val bar = "█".repeat(barLength)
             println(String.format(Locale.US, "%6.1f° | %.4f | %s", angleDegrees, correlation, bar))
