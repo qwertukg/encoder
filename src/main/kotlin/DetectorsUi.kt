@@ -301,17 +301,17 @@ private fun buildDetectorsSvg(
     )
 
     val builder = StringBuilder()
-    builder.appendLine("""<svg viewBox=\"0 0 $width $height\" width=\"$width\" height=\"$height\" xmlns=\"http://www.w3.org/2000/svg\">""")
-    builder.appendLine("""<rect x=\"0\" y=\"0\" width=\"$width\" height=\"$height\" fill=\"#ffffff\" rx=\"18\"/>""")
-    builder.appendLine("""<circle cx=\"${fmt(centerX)}\" cy=\"${fmt(centerY)}\" r=\"${fmt(baseRadius)}\" fill=\"none\" stroke=\"#111827\" stroke-width=\"1.2\"/>""")
+    builder.appendLine("""<svg viewBox="0 0 $width $height" width="$width" height="$height" xmlns="http://www.w3.org/2000/svg">""")
+    builder.appendLine("""<rect x="0" y="0" width="$width" height="$height" fill="#ffffff" rx="18"/>""")
+    builder.appendLine("""<circle cx="${fmt(centerX)}" cy="${fmt(centerY)}" r="${fmt(baseRadius)}" fill="none" stroke="#111827" stroke-width="1.2"/>""")
 
     val markX = centerX + baseRadius * cos(markAngleRadians)
     val markY = centerY - baseRadius * sin(markAngleRadians)
     builder.appendLine(
-        """<line x1=\"${fmt(centerX)}\" y1=\"${fmt(centerY)}\" x2=\"${fmt(markX)}\" y2=\"${fmt(markY)}\" stroke=\"#111827\" stroke-width=\"1.4\" stroke-dasharray=\"6 4\"/>"""
+        """<line x1="${fmt(centerX)}" y1="${fmt(centerY)}" x2="${fmt(markX)}" y2="${fmt(markY)}" stroke="#111827" stroke-width="1.4" stroke-dasharray="6 4"/>"""
     )
     builder.appendLine(
-        """<text x=\"${fmt(centerX)}\" y=\"${fmt(centerY - baseRadius - 20)}\" text-anchor=\"middle\" fill=\"#1f2937\" font-size=\"14\">${String.format(Locale.US, "%.2f°", markAngleDegrees)}</text>"""
+        """<text x="${fmt(centerX)}" y="${fmt(centerY - baseRadius - 20)}" text-anchor="middle" fill="#1f2937" font-size="14">${String.format(Locale.US, "%.2f°", markAngleDegrees)}</text>"""
     )
 
     var radialOffset = 18.0
@@ -333,7 +333,7 @@ private fun buildDetectorsSvg(
             val strokeWidth = if (active) "2.4" else "1.0"
             val opacity = if (active) "1.0" else "0.6"
             builder.appendLine(
-                """<polyline fill=\"none\" stroke=\"$color\" stroke-width=\"$strokeWidth\" stroke-linecap=\"round\" opacity=\"$opacity\" points=\"$points\"/>"""
+                """<polyline fill="none" stroke="$color" stroke-width="$strokeWidth" stroke-linecap="round" opacity="$opacity" points="$points"/>"""
             )
         }
 
@@ -387,25 +387,25 @@ private fun buildCorrelationSvg(profile: BackgroundCorrelationAnalyzer.Correlati
     }
 
     val builder = StringBuilder()
-    builder.appendLine("""<svg viewBox=\"0 0 $width $height\" width=\"$width\" height=\"$height\" xmlns=\"http://www.w3.org/2000/svg\">""")
-    builder.appendLine("""<rect x=\"0\" y=\"0\" width=\"$width\" height=\"$height\" fill=\"#ffffff\" rx=\"18\"/>""")
+    builder.appendLine("""<svg viewBox="0 0 $width $height" width="$width" height="$height" xmlns="http://www.w3.org/2000/svg">""")
+    builder.appendLine("""<rect x="0" y="0" width="$width" height="$height" fill="#ffffff" rx="18"/>""")
 
     // Оси
     builder.appendLine(
-        """<line x1=\"${fmt(marginLeft)}\" y1=\"${fmt(marginTop)}\" x2=\"${fmt(marginLeft)}\" y2=\"${fmt(marginTop + chartHeight)}\" stroke=\"#111827\" stroke-width=\"1.2\"/>"""
+        """<line x1="${fmt(marginLeft)}" y1="${fmt(marginTop)}" x2="${fmt(marginLeft)}" y2="${fmt(marginTop + chartHeight)}" stroke="#111827" stroke-width="1.2"/>"""
     )
     builder.appendLine(
-        """<line x1=\"${fmt(marginLeft)}\" y1=\"${fmt(marginTop + chartHeight)}\" x2=\"${fmt(marginLeft + chartWidth)}\" y2=\"${fmt(marginTop + chartHeight)}\" stroke=\"#111827\" stroke-width=\"1.2\"/>"""
+        """<line x1="${fmt(marginLeft)}" y1="${fmt(marginTop + chartHeight)}" x2="${fmt(marginLeft + chartWidth)}" y2="${fmt(marginTop + chartHeight)}" stroke="#111827" stroke-width="1.2"/>"""
     )
 
     // Деления по углам
     listOf(0.0, 90.0, 180.0, 270.0, 360.0).forEach { angle ->
         val x = angleToX(angle)
         builder.appendLine(
-            """<line x1=\"${fmt(x)}\" y1=\"${fmt(marginTop + chartHeight)}\" x2=\"${fmt(x)}\" y2=\"${fmt(marginTop + chartHeight + 8)}\" stroke=\"#9ca3af\" stroke-width=\"1\"/>"""
+            """<line x1="${fmt(x)}" y1="${fmt(marginTop + chartHeight)}" x2="${fmt(x)}" y2="${fmt(marginTop + chartHeight + 8)}" stroke="#9ca3af" stroke-width="1"/>"""
         )
         builder.appendLine(
-            """<text x=\"${fmt(x)}\" y=\"${fmt(marginTop + chartHeight + 24)}\" fill=\"#4b5563\" font-size=\"12\" text-anchor=\"middle\">${String.format(Locale.US, "%.0f°", angle)}</text>"""
+            """<text x="${fmt(x)}" y="${fmt(marginTop + chartHeight + 24)}" fill="#4b5563" font-size="12" text-anchor="middle">${String.format(Locale.US, "%.0f°", angle)}</text>"""
         )
     }
 
@@ -413,23 +413,23 @@ private fun buildCorrelationSvg(profile: BackgroundCorrelationAnalyzer.Correlati
     listOf(0.0, safeMax).distinct().forEach { value ->
         val y = valueToY(value)
         builder.appendLine(
-            """<line x1=\"${fmt(marginLeft - 8)}\" y1=\"${fmt(y)}\" x2=\"${fmt(marginLeft)}\" y2=\"${fmt(y)}\" stroke=\"#9ca3af\" stroke-width=\"1\"/>"""
+            """<line x1="${fmt(marginLeft - 8)}" y1="${fmt(y)}" x2="${fmt(marginLeft)}" y2="${fmt(y)}" stroke="#9ca3af" stroke-width="1"/>"""
         )
         builder.appendLine(
-            """<text x=\"${fmt(marginLeft - 12)}\" y=\"${fmt(y + 4)}\" fill=\"#4b5563\" font-size=\"12\" text-anchor=\"end\">${String.format(Locale.US, "%.3f", value)}</text>"""
+            """<text x="${fmt(marginLeft - 12)}" y="${fmt(y + 4)}" fill="#4b5563" font-size="12" text-anchor="end">${String.format(Locale.US, "%.3f", value)}</text>"""
         )
     }
 
     builder.appendLine(
-        """<polyline fill=\"none\" stroke=\"#2563EB\" stroke-width=\"2.4\" stroke-linejoin=\"round\" stroke-linecap=\"round\" points=\"$polylinePoints\"/>"""
+        """<polyline fill="none" stroke="#2563EB" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" points="$polylinePoints"/>"""
     )
 
     val refX = angleToX(profile.referenceAngleDegrees)
     builder.appendLine(
-        """<line x1=\"${fmt(refX)}\" y1=\"${fmt(marginTop)}\" x2=\"${fmt(refX)}\" y2=\"${fmt(marginTop + chartHeight)}\" stroke=\"#f97316\" stroke-dasharray=\"6 6\" stroke-width=\"1.5\"/>"""
+        """<line x1="${fmt(refX)}" y1="${fmt(marginTop)}" x2="${fmt(refX)}" y2="${fmt(marginTop + chartHeight)}" stroke="#f97316" stroke-dasharray="6 6" stroke-width="1.5"/>"""
     )
     builder.appendLine(
-        """<text x=\"${fmt(refX)}\" y=\"${fmt(marginTop - 10)}\" fill=\"#f97316\" font-size=\"12\" text-anchor=\"middle\">${String.format(Locale.US, "Опорный угол %.2f°", normalizeDegrees0to360(profile.referenceAngleDegrees))}</text>"""
+        """<text x="${fmt(refX)}" y="${fmt(marginTop - 10)}" fill="#f97316" font-size="12" text-anchor="middle">${String.format(Locale.US, "Опорный угол %.2f°", normalizeDegrees0to360(profile.referenceAngleDegrees))}</text>"""
     )
 
     builder.appendLine("</svg>")
