@@ -115,7 +115,7 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
 
         // Геометрия страницы
         val pageCenterX = page.pageSize.width  / 2f
-        val pageCenterY = page.pageSize.height / 2f
+        val pageCenterY = (page.pageSize.height / 3f) * 1
 
         // Базовый круг
         pdfCanvas.setLineWidth(1f)
@@ -208,7 +208,7 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
         val textStartX = 40.0
         val textTopY = page.pageSize.height - 40.0
         val textLineHeight = 12.0
-        val layerHeader = "Слои детекторов (по DAML 4.4.1):"
+        val layerHeader = "Detector layers:"
 
         pdfCanvas.beginText()
             .setFontAndSize(font, 10f)
@@ -219,14 +219,12 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
             val windowWidthDeg = layer.arcLengthDegrees * (1.0 + layer.overlapFraction)
             val centerStepDeg = layer.arcLengthDegrees
             val layerDescription = String.format(
-                Locale.US,
-                "Слой %d: дуга %.3f°, детекторов %d, перекрытие %.2f, окно %.3f°, шаг %.3f°",
+                Locale.getDefault(),
+                "Layer %d: bow %.3f°, count %d, overlap %.2f",
                 index + 1,
                 layer.arcLengthDegrees,
                 layer.detectorCount,
                 layer.overlapFraction,
-                windowWidthDeg,
-                centerStepDeg
             )
             pdfCanvas.moveText(0.0, -textLineHeight)
                 .showText(layerDescription)
