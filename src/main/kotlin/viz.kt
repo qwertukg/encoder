@@ -111,6 +111,7 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
     PdfDocument(PdfWriter(outputPath)).use { pdf ->
         val page = pdf.addNewPage(PageSize.A4)
         val pdfCanvas = PdfCanvas(page)
+        val font = PdfFontFactory.createFont(StandardFonts.COURIER)
 
         // Геометрия страницы
         val pageCenterX = page.pageSize.width  / 2f
@@ -203,6 +204,38 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
             radialOffset += 15.0
         }
 
+        // Текстовый блок с характеристиками слоёв, чтобы pdf содержал каноническое описание конфигурации из DAML.
+        val textStartX = 40.0
+        val textTopY = page.pageSize.height - 40.0
+        val textLineHeight = 12.0
+        val layerHeader = "Слои детекторов (по DAML 4.4.1):"
+
+        pdfCanvas.beginText()
+            .setFontAndSize(font, 10f)
+            .moveText(textStartX, textTopY)
+            .showText(layerHeader)
+
+        layers.forEachIndexed { index, layer ->
+            val windowWidthDeg = layer.arcLengthDegrees * (1.0 + layer.overlapFraction)
+            val centerStepDeg = layer.arcLengthDegrees
+            val layerDescription = String.format(
+                Locale.US,
+                "Слой %d: дуга %.3f°, детекторов %d, перекрытие %.2f, окно %.3f°, шаг %.3f°",
+                index + 1,
+                layer.arcLengthDegrees,
+                layer.detectorCount,
+                layer.overlapFraction,
+                windowWidthDeg,
+                centerStepDeg
+            )
+            pdfCanvas.moveText(0.0, -textLineHeight)
+                .showText(layerDescription)
+        }
+        pdfCanvas.endText()
+
+        val layerTextBlockHeight = textLineHeight * (layers.size + 1)
+        val angleInfoTopY = textTopY - layerTextBlockHeight - 16.0
+
         // (Опционально) Радиальная метка угла markAngleRadians
         if (markAngleRadians != null) {
             val dx = (radius * kotlin.math.cos(markAngleRadians)).toFloat()
@@ -216,21 +249,19 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
 
         // Подписи: угол в градусах и битовый код, оформленный графикой (палочки и пробелы) по канону DAML.
         if (markAngleDeg != null && encodedBitsForMark != null) {
-            val font = PdfFontFactory.createFont(StandardFonts.COURIER)
             val angleText = String.format(Locale.US, "Angle: %.2f°", markAngleDeg)
 
             pdfCanvas.beginText()
                 .setFontAndSize(font, 10f)
-                .moveText(40.0, page.pageSize.height - 40.0)
+                .moveText(textStartX, angleInfoTopY)
                 .showText(angleText)
-
-            pdfCanvas.moveText(0.0, -14.0)
+                .moveText(0.0, -textLineHeight)
                 .showText("Code:")
 
             pdfCanvas.endText()
 
-            val codeStartX = 40.0
-            val codeTopY = page.pageSize.height - 60.0
+            val codeStartX = textStartX
+            val codeTopY = angleInfoTopY - 2 * textLineHeight - 8.0
             val bitHeight = 10.0
             val rowSpacing = 14.0
             val bitSpacing = 2.0
