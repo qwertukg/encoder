@@ -214,32 +214,53 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
                 .stroke()
         }
 
-        // Подписи: угол в градусах и битовый код, оформленный палочками (1) и пробелами (0), см. канон DAML.
+        // Подписи: угол в градусах и битовый код, оформленный графикой (палочки и пробелы) по канону DAML.
         if (markAngleDeg != null && encodedBitsForMark != null) {
             val font = PdfFontFactory.createFont(StandardFonts.COURIER)
             val angleText = String.format(Locale.US, "Угол: %.2f°", markAngleDeg)
-            val codeLines = encodedBitsForMark
-                .toList()
-                .chunked(64)
-                .map { chunk -> chunk.joinToString("") { if (it == 1) "│" else " " } }
 
             pdfCanvas.beginText()
                 .setFontAndSize(font, 10f)
                 .moveText(40.0, page.pageSize.height - 40.0)
                 .showText(angleText)
 
-            if (codeLines.isNotEmpty()) {
-                pdfCanvas.moveText(0.0, -14.0)
-                val indent = "Код: ".length
-                pdfCanvas.showText("Код: ${codeLines.first()}")
-                val indentSpaces = " ".repeat(indent)
-                codeLines.drop(1).forEach { line ->
-                    pdfCanvas.moveText(0.0, -12.0)
-                    pdfCanvas.showText(indentSpaces + line)
-                }
-            }
+            pdfCanvas.moveText(0.0, -14.0)
+                .showText("Код:")
 
             pdfCanvas.endText()
+
+            val codeStartX = 40.0
+            val codeTopY = page.pageSize.height - 60.0
+            val bitHeight = 10.0
+            val rowSpacing = 14.0
+            val bitSpacing = 2.0
+            val bitsPerRow = 64
+            val activeSegmentColor = DeviceRgb(0, 0, 0)
+            val inactiveSegmentColor = DeviceRgb(255, 255, 255)
+
+            pdfCanvas.saveState()
+            pdfCanvas.setLineWidth(1f)
+
+            var bitIndex = 0
+            var rowIndex = 0
+            while (bitIndex < encodedBitsForMark.size) {
+                val bitsThisRow = minOf(bitsPerRow, encodedBitsForMark.size - bitIndex)
+                var x = codeStartX
+                val yTop = codeTopY - rowIndex * rowSpacing
+                val yBottom = yTop - bitHeight
+                for (i in 0 until bitsThisRow) {
+                    val bit = encodedBitsForMark[bitIndex + i]
+                    pdfCanvas.setStrokeColor(if (bit == 1) activeSegmentColor else inactiveSegmentColor)
+                    pdfCanvas.moveTo(x, yTop)
+                        .lineTo(x, yBottom)
+                        .stroke()
+                    x += bitSpacing
+                }
+                bitIndex += bitsThisRow
+                rowIndex++
+            }
+
+            pdfCanvas.restoreState()
         }
     }
 }
