@@ -103,7 +103,7 @@ fun SlidingWindowAngleEncoder.hitWindowDeg(angleDeg: Double, centerDeg: Double, 
 fun SlidingWindowAngleEncoder.drawDetectorsPdf(
     outputPath: String,
     markAngleRadians: Double? = null,
-    radius: Float = 200f
+    radius: Float = 150f
 ) {
     PdfDocument(PdfWriter(outputPath)).use { pdf ->
         val page = pdf.addNewPage(PageSize.A4)

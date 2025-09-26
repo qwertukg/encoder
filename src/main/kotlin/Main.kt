@@ -1,26 +1,15 @@
 import SlidingWindowAngleEncoder.Layer
 import kotlin.math.PI
 
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
-//fun main2() {
-//    val encoder = SlidingWindowAngleEncoder(codeSize = 256)
-//
-//    for (deg in 0 until 360 step 1) {
-//        val rad = deg * PI / 180.0
-//        val code = encoder.encode(rad)
-//    }
-//
-//    encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = PI)
-//}
-
 fun main() {
     val encoder = SlidingWindowAngleEncoder(listOf(
         Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
         Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
         Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4)
-    ))
+        Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 2.8125,  detectorCount = 128,  overlapFraction = 0.4),
+    ), 256)
 
     (0..359).forEach {
         val angleRadians = it * PI / 180.0
@@ -28,7 +17,7 @@ fun main() {
         println(code.joinToString("", "[", "]") + ":$it")
     }
 
-    encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = 6 * PI / 180.0)
+    encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = 15 * PI / 180.0)
 
 
 }

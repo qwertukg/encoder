@@ -14,10 +14,12 @@ import kotlin.math.PI
 class SlidingWindowAngleEncoder(
     /** Конфигурации слоёв (см. data class Layer ниже). */
     val layers: List<Layer> = listOf(
-        Layer(arcLengthDegrees = 90.0,   detectorCount = 8,   overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 45.0,   detectorCount = 16,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 22.5,   detectorCount = 32,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 11.25,  detectorCount = 64,  overlapFraction = 0.4)
+        Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
+        Layer(arcLengthDegrees = 2.8125,  detectorCount = 128,  overlapFraction = 0.4),
     ),
     /** Размер результирующего кода в битах. */
     val codeSizeInBits: Int = 256
