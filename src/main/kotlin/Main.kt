@@ -19,7 +19,7 @@ fun main() {
     }
 
     val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
-    val results = backgroundCorrelationAnalyzer.analyze(encoder.codes.map { it.second })
+    val results = backgroundCorrelationAnalyzer.analyzeWithAngles(encoder.codes)
 
     println("Done")
 

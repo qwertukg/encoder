@@ -1,3 +1,7 @@
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -74,6 +78,68 @@ class BackgroundCorrelationAnalyzer {
         return Stats(mean, safeMax, pairs)
     }
 
+    /**
+     * Перегрузка анализа, работающая с парами (угол, код) и печатающая профиль корреляции
+     * для нулевого угла. Визуализация повторяет подход из разд. 2.2.4.1 DAML, где подчёркнута
+     * важность контроля паразитной схожести между кодами.
+     */
+    fun analyzeWithAngles(codes: Collection<Pair<Double, IntArray>>): Stats {
+        val stats = analyze(codes.map { it.second })
+        printCorrelationProfile(referenceAngleDegrees = 0.0, codesWithAngles = codes)
+        return stats
+    }
+
+    private fun printCorrelationProfile(
+        referenceAngleDegrees: Double,
+        codesWithAngles: Collection<Pair<Double, IntArray>>
+    ) {
+        if (codesWithAngles.isEmpty()) {
+            println("Нет кодов для построения профиля корреляции.")
+            return
+        }
+
+        data class AngleEntry(val angleDegrees: Double, val code: IntArray, val activation: Int)
+
+        val entries = codesWithAngles
+            .map { (angleRadians, code) ->
+                val normalizedDegrees = normalizeDegrees(Math.toDegrees(angleRadians))
+                AngleEntry(normalizedDegrees, code, countActiveBits(code))
+            }
+            .sortedBy { it.angleDegrees }
+
+        val reference = entries.minByOrNull {
+            angularDistanceDegrees(it.angleDegrees, referenceAngleDegrees)
+        }
+
+        if (reference == null) {
+            println("Не найден код, соответствующий нулевому углу.")
+            return
+        }
+
+        val referenceCode = reference.code
+        val referenceActivation = reference.activation
+
+        val profile = entries.map { entry ->
+            val intersection = countIntersection(referenceCode, entry.code)
+            val denominator = sqrt(referenceActivation.toDouble() * entry.activation)
+            val correlation = if (denominator == 0.0) 0.0 else intersection / denominator
+            entry.angleDegrees to correlation
+        }
+
+        val maxCorrelation = profile.maxOfOrNull { it.second } ?: 0.0
+        val scale = if (maxCorrelation == 0.0) 0.0 else 40.0 / maxCorrelation
+
+        println(
+            "Профиль корреляции для угла ${formatAngle(reference.angleDegrees)}° (по канону DAML):"
+        )
+
+        profile.forEach { (angleDegrees, correlation) ->
+            val barLength = if (scale == 0.0) 0 else (correlation * scale).roundToInt()
+            val bar = "█".repeat(barLength)
+            println(String.format(Locale.US, "%6.1f° | %.4f | %s", angleDegrees, correlation, bar))
+        }
+    }
+
     private fun countActiveBits(code: IntArray): Int = code.count { it != 0 }
 
     private fun countIntersection(left: IntArray, right: IntArray): Int {
@@ -85,4 +151,18 @@ class BackgroundCorrelationAnalyzer {
         }
         return intersection
     }
+
+    private fun normalizeDegrees(angleDegrees: Double): Double {
+        var normalized = angleDegrees % 360.0
+        if (normalized < 0.0) normalized += 360.0
+        return normalized
+    }
+
+    private fun angularDistanceDegrees(a: Double, b: Double): Double {
+        val diff = abs(a - b) % 360.0
+        return min(diff, 360.0 - diff)
+    }
+
+    private fun formatAngle(angleDegrees: Double): String =
+        String.format(Locale.US, "%.2f", angleDegrees)
 }
