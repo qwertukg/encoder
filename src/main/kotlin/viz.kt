@@ -1,8 +1,11 @@
+import com.itextpdf.io.font.constants.StandardFonts
 import com.itextpdf.kernel.colors.DeviceRgb
+import com.itextpdf.kernel.font.PdfFontFactory
 import com.itextpdf.kernel.geom.PageSize
 import com.itextpdf.kernel.pdf.PdfDocument
 import com.itextpdf.kernel.pdf.PdfWriter
 import com.itextpdf.kernel.pdf.canvas.PdfCanvas
+import java.util.Locale
 
 // ----------------- утилиты для работы в градусах -----------------
 
@@ -134,25 +137,21 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
         // Нормализованный угол подсветки (если задан)
         val markAngleDeg = markAngleRadians?.let { normalizeDegrees0to360(Math.toDegrees(it)) }
 
-        // Подсветка активных детекторов (слой, индекс) по правилу «интервального попадания»
+        // Код, полученный по каноническому encode из разд. 4.4.1 DAML (используем для подсветки и подписи).
+        val encodedBitsForMark = markAngleRadians?.let { encode(it) }
+
+        // Подсветка активных детекторов (слой, индекс) берём из готового кода, чтобы визуализация совпадала с encode.
         val activeDetectors = mutableSetOf<Pair<Int, Int>>()
-        if (markAngleDeg != null) {
-            val layerCount = layers.size.coerceAtLeast(1)
+        if (encodedBitsForMark != null) {
+            var globalBitOffset = 0
             layers.forEachIndexed { layerIndex, layer ->
-                val centerStepRadians = (layer.arcLengthDegrees) * Math.PI / 180.0
-                val centerStepDeg = Math.toDegrees(centerStepRadians)
-                val layerPhaseRadians = (layerIndex.toDouble() / layerCount) * centerStepRadians
-                val layerPhaseDeg = Math.toDegrees(layerPhaseRadians)
-
-                val windowWidthDeg = layer.arcLengthDegrees * (1.0 + layer.overlapFraction)
-                val halfWindowDeg = windowWidthDeg / 2.0
-
                 for (detectorIndex in 0 until layer.detectorCount) {
-                    val centerDeg = normalizeDegrees0to360(detectorIndex * centerStepDeg + layerPhaseDeg)
-                    if (hitWindowDeg(markAngleDeg, centerDeg, halfWindowDeg)) {
+                    val bitIndex = globalBitOffset + detectorIndex
+                    if (bitIndex < encodedBitsForMark.size && encodedBitsForMark[bitIndex] == 1) {
                         activeDetectors += layerIndex to detectorIndex
                     }
                 }
+                globalBitOffset += layer.detectorCount
             }
         }
 
@@ -213,6 +212,55 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
                 .moveTo(pageCenterX.toDouble(), pageCenterY.toDouble())
                 .lineTo((pageCenterX + dx).toDouble(), (pageCenterY + dy).toDouble())
                 .stroke()
+        }
+
+        // Подписи: угол в градусах и битовый код, оформленный графикой (палочки и пробелы) по канону DAML.
+        if (markAngleDeg != null && encodedBitsForMark != null) {
+            val font = PdfFontFactory.createFont(StandardFonts.COURIER)
+            val angleText = String.format(Locale.US, "Angle: %.2f°", markAngleDeg)
+
+            pdfCanvas.beginText()
+                .setFontAndSize(font, 10f)
+                .moveText(40.0, page.pageSize.height - 40.0)
+                .showText(angleText)
+
+            pdfCanvas.moveText(0.0, -14.0)
+                .showText("Code:")
+
+            pdfCanvas.endText()
+
+            val codeStartX = 40.0
+            val codeTopY = page.pageSize.height - 60.0
+            val bitHeight = 10.0
+            val rowSpacing = 14.0
+            val bitSpacing = 2.0
+            val bitsPerRow = 256
+            val activeSegmentColor = DeviceRgb(0, 0, 0)
+            val inactiveSegmentColor = DeviceRgb(200, 200, 200)
+
+            pdfCanvas.saveState()
+            pdfCanvas.setLineWidth(1f)
+
+            var bitIndex = 0
+            var rowIndex = 0
+            while (bitIndex < encodedBitsForMark.size) {
+                val bitsThisRow = minOf(bitsPerRow, encodedBitsForMark.size - bitIndex)
+                var x = codeStartX
+                val yTop = codeTopY - rowIndex * rowSpacing
+                val yBottom = yTop - bitHeight
+                for (i in 0 until bitsThisRow) {
+                    val bit = encodedBitsForMark[bitIndex + i]
+                    pdfCanvas.setStrokeColor(if (bit == 1) activeSegmentColor else inactiveSegmentColor)
+                    pdfCanvas.moveTo(x, yTop)
+                        .lineTo(x, yBottom)
+                        .stroke()
+                    x += bitSpacing
+                }
+                bitIndex += bitsThisRow
+                rowIndex++
+            }
+
+            pdfCanvas.restoreState()
         }
     }
 }
