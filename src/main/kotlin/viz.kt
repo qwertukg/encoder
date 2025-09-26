@@ -217,7 +217,7 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
         // Подписи: угол в градусах и битовый код, оформленный графикой (палочки и пробелы) по канону DAML.
         if (markAngleDeg != null && encodedBitsForMark != null) {
             val font = PdfFontFactory.createFont(StandardFonts.COURIER)
-            val angleText = String.format(Locale.US, "Угол: %.2f°", markAngleDeg)
+            val angleText = String.format(Locale.US, "Angle: %.2f°", markAngleDeg)
 
             pdfCanvas.beginText()
                 .setFontAndSize(font, 10f)
@@ -225,7 +225,7 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
                 .showText(angleText)
 
             pdfCanvas.moveText(0.0, -14.0)
-                .showText("Код:")
+                .showText("Code:")
 
             pdfCanvas.endText()
 
@@ -234,9 +234,9 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
             val bitHeight = 10.0
             val rowSpacing = 14.0
             val bitSpacing = 2.0
-            val bitsPerRow = 64
+            val bitsPerRow = 256
             val activeSegmentColor = DeviceRgb(0, 0, 0)
-            val inactiveSegmentColor = DeviceRgb(255, 255, 255)
+            val inactiveSegmentColor = DeviceRgb(200, 200, 200)
 
             pdfCanvas.saveState()
             pdfCanvas.setLineWidth(1f)
