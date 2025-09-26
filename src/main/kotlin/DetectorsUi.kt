@@ -102,6 +102,7 @@ fun Application.detectorsUiModule(
                                     font-size: 20px;
                                 }
                                 pre.bits {
+                                    font-size: 10px;
                                     background: #0f172a;
                                     color: #e2e8f0;
                                     padding: 16px;
@@ -224,7 +225,7 @@ fun Application.detectorsUiModule(
                             +encodedBitsBlock
                         }
                     }
-
+                    br
                     div(classes = "card") {
                         h2 { +"Конфигурация слоёв" }
                         table(classes = "layers") {
@@ -441,20 +442,22 @@ private fun formatCodeBlocks(code: IntArray, groupSize: Int = 4, rowSize: Int = 
     val builder = StringBuilder()
     var index = 0
     while (index < code.size) {
-        val limit = min(index + rowSize, code.size)
-        var groupCounter = 0
-        for (i in index until limit) {
-            builder.append(code[i])
-            groupCounter++
-            if (groupCounter == groupSize && i != limit - 1) {
-                builder.append(' ')
-                groupCounter = 0
-            }
-        }
-        index = limit
-        if (index < code.size) {
-            builder.append('\n')
-        }
+        builder.append(if (code[index] == 0) "." else "|")
+        index++
+//        val limit = min(index + rowSize, code.size)
+//        var groupCounter = 0
+//        for (i in index until limit) {
+//            builder.append(code[i])
+//            groupCounter++
+//            if (groupCounter == groupSize && i != limit - 1) {
+//                builder.append(' ')
+//                groupCounter = 0
+//            }
+//        }
+//        index = limit
+//        if (index < code.size) {
+//            builder.append('\n')
+//        }
     }
     return builder.toString()
 }
