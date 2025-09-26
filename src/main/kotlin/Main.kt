@@ -14,9 +14,12 @@ fun main() {
     (0..359).forEach {
         val angleRadians = it * PI / 180.0
         val code = encoder.encode(angleRadians)
-        println(code.joinToString("", "[", "]") + ":$it")
-        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
+//        println(code.joinToString("", "[", "]") + ":$it")
+//        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
     }
+
+    val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
+    val results = backgroundCorrelationAnalyzer.analyze(encoder.codes.map { it.second })
 
     println("Done")
 
