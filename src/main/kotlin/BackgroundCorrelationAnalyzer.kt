@@ -83,9 +83,9 @@ class BackgroundCorrelationAnalyzer {
      * для нулевого угла. Визуализация повторяет подход из разд. 2.2.4.1 DAML, где подчёркнута
      * важность контроля паразитной схожести между кодами.
      */
-    fun analyzeWithAngles(codes: Collection<Pair<Double, IntArray>>): Stats {
+    fun analyzeWithAngles(codes: Collection<Pair<Double, IntArray>>, angle: Double): Stats {
         val stats = analyze(codes.map { it.second })
-        printCorrelationProfile(referenceAngleDegrees = 0.0, codesWithAngles = codes)
+        printCorrelationProfile(referenceAngleDegrees = angle, codesWithAngles = codes)
         return stats
     }
 
@@ -130,7 +130,7 @@ class BackgroundCorrelationAnalyzer {
         val scale = if (maxCorrelation == 0.0) 0.0 else 40.0 / maxCorrelation
 
         println(
-            "Профиль корреляции для угла ${formatAngle(reference.angleDegrees)}° (по канону DAML):"
+            "Профиль корреляции для угла ${formatAngle(reference.angleDegrees)}°:"
         )
 
         profile.forEach { (angleDegrees, correlation) ->
