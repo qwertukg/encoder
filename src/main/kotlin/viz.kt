@@ -110,7 +110,8 @@ fun SlidingWindowAngleEncoder.hitWindowDeg(angleDeg: Double, centerDeg: Double, 
 fun SlidingWindowAngleEncoder.drawDetectorsPdf(
     outputPath: String,
     markAngleRadians: Double? = null,
-    radius: Float = 150f
+    radius: Float = 150f,
+    correlationProfile: BackgroundCorrelationAnalyzer.CorrelationProfile? = null
 ) {
     val outputFile = File(outputPath)
     outputFile.parentFile?.let { parent ->
@@ -130,6 +131,15 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
 
             val page = pdf.addNewPage(PageSize.A4)
             val markAngleDeg = markAngleRadians?.let { normalizeDegrees0to360(Math.toDegrees(it)) }
+            val correlationData = correlationProfile ?: run {
+                if (markAngleDeg != null && codes.isNotEmpty()) {
+                    BackgroundCorrelationAnalyzer()
+                        .analyzeWithAngles(codes, markAngleDeg)
+                        .correlationProfile
+                } else {
+                    null
+                }
+            }
             markAngleDeg?.let {
                 val labelPrefix = String.format(Locale.US, "%.2f° ", it)
                 page.setPageLabel(null, labelPrefix)
@@ -313,6 +323,123 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
                 }
 
                 pdfCanvas.restoreState()
+            }
+
+            correlationData?.let { profile ->
+                val chartLeft = page.pageSize.width / 2.0 + 20.0
+                val chartRight = page.pageSize.width - 40.0
+                val chartBottom = 80.0
+                val chartTop = chartBottom + 220.0
+                val chartWidth = chartRight - chartLeft
+                val chartHeight = chartTop - chartBottom
+
+                fun angleToX(angleDeg: Double): Double {
+                    val normalized = normalizeDegrees0to360(angleDeg)
+                    return if (normalized < EPS_DEG && angleDeg > 0.0) {
+                        chartRight
+                    } else {
+                        chartLeft + (normalized / 360.0) * chartWidth
+                    }
+                }
+
+                pdfCanvas.beginText()
+                    .setFontAndSize(font, 10f)
+                    .moveText(chartLeft, chartTop + 16.0)
+                    .showText("Профиль корреляции")
+                    .moveText(0.0, -12.0)
+                    .showText(String.format(Locale.US, "Опорный угол: %.2f°", normalizeDegrees0to360(profile.referenceAngleDegrees)))
+                    .endText()
+
+                pdfCanvas.saveState()
+                pdfCanvas.setStrokeColor(DeviceRgb(0, 0, 0))
+                    .setLineWidth(0.6f)
+                    .moveTo(chartLeft, chartBottom)
+                    .lineTo(chartLeft, chartTop)
+                    .moveTo(chartLeft, chartBottom)
+                    .lineTo(chartRight, chartBottom)
+                    .stroke()
+                pdfCanvas.restoreState()
+
+                val tickAngles = listOf(0.0, 90.0, 180.0, 270.0, 360.0)
+                pdfCanvas.saveState()
+                pdfCanvas.setLineWidth(0.4f)
+                tickAngles.forEach { angleDeg ->
+                    val x = angleToX(angleDeg)
+                    pdfCanvas.moveTo(x, chartBottom)
+                        .lineTo(x, chartBottom - 4.0)
+                }
+                pdfCanvas.stroke()
+                pdfCanvas.restoreState()
+
+                tickAngles.forEach { angleDeg ->
+                    val x = angleToX(angleDeg)
+                    pdfCanvas.beginText()
+                        .setFontAndSize(font, 8f)
+                        .moveText(x - 8.0, chartBottom - 16.0)
+                        .showText(String.format(Locale.US, "%.0f°", angleDeg))
+                        .endText()
+                }
+
+                val points = profile.points.sortedBy { it.angleDegrees }
+                val maxCorrelation = points.maxOfOrNull { it.correlation } ?: 0.0
+                val safeMax = if (maxCorrelation <= 0.0) 1.0 else maxCorrelation
+
+                val yTicks = listOf(0.0, maxCorrelation).distinct()
+                pdfCanvas.saveState()
+                pdfCanvas.setLineWidth(0.4f)
+                yTicks.forEach { value ->
+                    val y = chartBottom + (value / safeMax) * chartHeight
+                    pdfCanvas.moveTo(chartLeft - 4.0, y)
+                        .lineTo(chartLeft, y)
+                }
+                pdfCanvas.stroke()
+                pdfCanvas.restoreState()
+
+                yTicks.forEach { value ->
+                    val y = chartBottom + (value / safeMax) * chartHeight
+                    pdfCanvas.beginText()
+                        .setFontAndSize(font, 8f)
+                        .moveText(chartLeft - 34.0, y - 3.0)
+                        .showText(String.format(Locale.US, "%.3f", value))
+                        .endText()
+                }
+
+                if (points.isNotEmpty()) {
+                    val refX = angleToX(profile.referenceAngleDegrees)
+                    pdfCanvas.saveState()
+                    pdfCanvas.setStrokeColor(DeviceRgb(239, 68, 68))
+                        .setLineWidth(0.7f)
+                        .moveTo(refX, chartBottom)
+                        .lineTo(refX, chartTop)
+                        .stroke()
+                    pdfCanvas.restoreState()
+
+                    pdfCanvas.saveState()
+                    pdfCanvas.setStrokeColor(DeviceRgb(52, 120, 246))
+                        .setLineWidth(1.2f)
+
+                    points.forEachIndexed { index, point ->
+                        val x = angleToX(point.angleDegrees)
+                        val y = chartBottom + (point.correlation / safeMax) * chartHeight
+                        if (index == 0) {
+                            pdfCanvas.moveTo(x, y)
+                        } else {
+                            pdfCanvas.lineTo(x, y)
+                        }
+                    }
+                    pdfCanvas.stroke()
+                    pdfCanvas.restoreState()
+
+                    pdfCanvas.saveState()
+                    pdfCanvas.setFillColor(DeviceRgb(52, 120, 246))
+                    points.forEach { point ->
+                        val x = angleToX(point.angleDegrees)
+                        val y = chartBottom + (point.correlation / safeMax) * chartHeight
+                        pdfCanvas.circle(x, y, 2.0)
+                    }
+                    pdfCanvas.fill()
+                    pdfCanvas.restoreState()
+                }
             }
         }
 

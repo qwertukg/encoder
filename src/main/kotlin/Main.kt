@@ -15,11 +15,22 @@ fun main() {
         val angleRadians = it * PI / 180.0
         val code = encoder.encode(angleRadians)
         println(code.joinToString("", "[", "]") + ":$it")
-//        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
     }
 
     val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
-    val results = backgroundCorrelationAnalyzer.analyzeWithAngles(encoder.codes, 180.0)
+    val analysis = backgroundCorrelationAnalyzer.analyzeWithAngles(encoder.codes, 180.0)
+    val stats = analysis.stats
+    println("Mean correlation: ${stats.meanCorrelation}")
+    println("Max correlation: ${stats.maxCorrelation}")
+
+    analysis.correlationProfile?.let { profile ->
+        val referenceRadians = Math.toRadians(profile.referenceAngleDegrees)
+        encoder.drawDetectorsPdf(
+            "./detectors.pdf",
+            markAngleRadians = referenceRadians,
+            correlationProfile = profile
+        )
+    }
 
     println("Done")
 

@@ -1,7 +1,5 @@
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -79,23 +77,49 @@ class BackgroundCorrelationAnalyzer {
     }
 
     /**
-     * Перегрузка анализа, работающая с парами (угол, код) и печатающая профиль корреляции
-     * для нулевого угла. Визуализация повторяет подход из разд. 2.2.4.1 DAML, где подчёркнута
-     * важность контроля паразитной схожести между кодами.
+     * Описание одного узла профиля корреляции.
+     * @param angleDegrees угол в градусах (нормализован в [0, 360))
+     * @param correlation значение дискретной косинусной корреляции с опорным кодом
      */
-    fun analyzeWithAngles(codes: Collection<Pair<Double, IntArray>>, angle: Double): Stats {
+    data class CorrelationPoint(val angleDegrees: Double, val correlation: Double)
+
+    /**
+     * Профиль корреляции для конкретного опорного угла.
+     * @param referenceAngleDegrees нормализованный угол кода, выбранного опорным
+     * @param points коллекция точек (угол → корреляция)
+     */
+    data class CorrelationProfile(
+        val referenceAngleDegrees: Double,
+        val points: List<CorrelationPoint>
+    )
+
+    /**
+     * Расширенный результат анализа: статистики фоновой корреляции + профиль для визуализации.
+     */
+    data class StatsWithProfile(
+        val stats: Stats,
+        val correlationProfile: CorrelationProfile?
+    )
+
+    /**
+     * Перегрузка анализа, работающая с парами (угол, код) и возвращающая профиль корреляции
+     * для указанного опорного угла. Профиль можно отрисовать в PDF.
+     */
+    fun analyzeWithAngles(
+        codes: Collection<Pair<Double, IntArray>>,
+        angle: Double
+    ): StatsWithProfile {
         val stats = analyze(codes.map { it.second })
-        printCorrelationProfile(referenceAngleDegrees = angle, codesWithAngles = codes)
-        return stats
+        val profile = buildCorrelationProfile(referenceAngleDegrees = angle, codesWithAngles = codes)
+        return StatsWithProfile(stats, profile)
     }
 
-    private fun printCorrelationProfile(
+    private fun buildCorrelationProfile(
         referenceAngleDegrees: Double,
         codesWithAngles: Collection<Pair<Double, IntArray>>
-    ) {
+    ): CorrelationProfile? {
         if (codesWithAngles.isEmpty()) {
-            println("Нет кодов для построения профиля корреляции.")
-            return
+            return null
         }
 
         data class AngleEntry(val angleDegrees: Double, val code: IntArray, val activation: Int)
@@ -109,35 +133,22 @@ class BackgroundCorrelationAnalyzer {
 
         val reference = entries.minByOrNull {
             angularDistanceDegrees(it.angleDegrees, referenceAngleDegrees)
-        }
-
-        if (reference == null) {
-            println("Не найден код, соответствующий нулевому углу.")
-            return
-        }
+        } ?: return null
 
         val referenceCode = reference.code
         val referenceActivation = reference.activation
 
-        val profile = entries.map { entry ->
+        val points = entries.map { entry ->
             val intersection = countIntersection(referenceCode, entry.code)
             val denominator = sqrt(referenceActivation.toDouble() * entry.activation)
             val correlation = if (denominator == 0.0) 0.0 else intersection / denominator
-            entry.angleDegrees to correlation
+            CorrelationPoint(entry.angleDegrees, correlation)
         }
 
-        val maxCorrelation = profile.maxOfOrNull { it.second } ?: 0.0
-        val scale = if (maxCorrelation == 0.0) 0.0 else 40.0 / maxCorrelation
-
-        println(
-            "Профиль корреляции для угла ${formatAngle(reference.angleDegrees)}°:"
+        return CorrelationProfile(
+            referenceAngleDegrees = reference.angleDegrees,
+            points = points
         )
-
-        profile.forEach { (angleDegrees, correlation) ->
-            val barLength = if (scale == 0.0) 0 else (correlation * scale).roundToInt()
-            val bar = "█".repeat(barLength)
-            println(String.format(Locale.US, "%6.1f° | %.4f | %s", angleDegrees, correlation, bar))
-        }
     }
 
     private fun countActiveBits(code: IntArray): Int = code.count { it != 0 }
@@ -162,7 +173,4 @@ class BackgroundCorrelationAnalyzer {
         val diff = abs(a - b) % 360.0
         return min(diff, 360.0 - diff)
     }
-
-    private fun formatAngle(angleDegrees: Double): String =
-        String.format(Locale.US, "%.2f", angleDegrees)
 }
