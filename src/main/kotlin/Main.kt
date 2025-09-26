@@ -16,9 +16,8 @@ fun main() {
         val code = encoder.encode(angleRadians)
         println(code.joinToString("", "[", "]") + ":$it")
         encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
-
     }
 
-
+    println("Done")
 
 }

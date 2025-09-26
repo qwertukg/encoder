@@ -41,6 +41,8 @@ class SlidingWindowAngleEncoder(
      */
     data class Layer(val arcLengthDegrees: Double, val detectorCount: Int, val overlapFraction: Double)
 
+    val codes = mutableSetOf<Pair<Double, IntArray>>()
+
     /** Полный круг в радианах (2π). */
     val twoPi: Double = 2.0 * PI
 
@@ -111,6 +113,7 @@ class SlidingWindowAngleEncoder(
         }
 
         lastEncodedCode = encodedBits
+        codes.add(angleInRadians to encodedBits)
         return encodedBits
     }
 }
