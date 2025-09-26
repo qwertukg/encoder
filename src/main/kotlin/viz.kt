@@ -1,3 +1,4 @@
+import BackgroundCorrelationAnalyzer.CorrelationProfile
 import com.itextpdf.io.font.constants.StandardFonts
 import com.itextpdf.kernel.colors.DeviceRgb
 import com.itextpdf.kernel.font.PdfFontFactory
@@ -10,6 +11,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.Locale
+import kotlin.math.max
 
 // ----------------- утилиты для работы в градусах -----------------
 
@@ -110,6 +112,7 @@ fun SlidingWindowAngleEncoder.hitWindowDeg(angleDeg: Double, centerDeg: Double, 
 fun SlidingWindowAngleEncoder.drawDetectorsPdf(
     outputPath: String,
     markAngleRadians: Double? = null,
+    correlationProfile: CorrelationProfile? = null,
     radius: Float = 150f
 ) {
     val outputFile = File(outputPath)
@@ -182,6 +185,7 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
             // Рисуем дуги детекторов каждого слоя
             var layerIndex = 0
             var radialOffset = 15.0
+            var maxRadialOffsetUsed = 0.0
             val layerCount = layers.size.coerceAtLeast(1)
 
             layers.forEach { layer ->
@@ -224,6 +228,9 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
                 }
 
                 layerIndex++
+                if (radialOffset > maxRadialOffsetUsed) {
+                    maxRadialOffsetUsed = radialOffset
+                }
                 radialOffset += 15.0
             }
 
@@ -268,6 +275,8 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
                     .stroke()
             }
 
+            var codeBlockBottomY: Double? = null
+
             // Подписи: угол в градусах и битовый код, оформленный графикой (палочки и пробелы) по канону DAML.
             if (markAngleDeg != null && encodedBitsForMark != null) {
                 val angleText = String.format(Locale.US, "Angle: %.2f°", markAngleDeg)
@@ -310,9 +319,129 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
                     }
                     bitIndex += bitsThisRow
                     rowIndex++
+                    codeBlockBottomY = yBottom
                 }
 
                 pdfCanvas.restoreState()
+            }
+
+            val chartProfile = correlationProfile
+            if (chartProfile != null && chartProfile.points.isNotEmpty()) {
+                val chartLeft = textStartX
+                val chartRight = page.pageSize.width - textStartX
+                val chartBottomBase = pageCenterY + (radius + maxRadialOffsetUsed) + 24.0
+                val chartBottom = max(chartBottomBase, 40.0)
+                val topCandidate = (codeBlockBottomY ?: (angleInfoTopY - 2 * textLineHeight)) - 24.0
+                val chartTop = max(topCandidate, chartBottom + 80.0)
+                val chartHeight = chartTop - chartBottom
+                val chartWidth = chartRight - chartLeft
+
+                val xMin = 0.0
+                val xMax = 360.0
+                val yMin = 0.0
+                val yMaxValue = chartProfile.points.maxOfOrNull { it.correlation } ?: 0.0
+                val yMax = if (yMaxValue <= 0.0) 1.0 else max(1.0, yMaxValue * 1.1)
+
+                fun mapX(angle: Double): Double {
+                    val clamped = angle.coerceIn(xMin, xMax)
+                    val ratio = if (xMax - xMin == 0.0) 0.0 else (clamped - xMin) / (xMax - xMin)
+                    return chartLeft + ratio * chartWidth
+                }
+
+                fun mapY(value: Double): Double {
+                    val safeValue = value.coerceIn(yMin, yMax)
+                    val ratio = if (yMax - yMin == 0.0) 0.0 else (safeValue - yMin) / (yMax - yMin)
+                    return chartBottom + ratio * chartHeight
+                }
+
+                val axisColor = DeviceRgb(90, 90, 90)
+                pdfCanvas.saveState()
+                pdfCanvas.setLineWidth(0.8f)
+                    .setStrokeColor(axisColor)
+                    .moveTo(chartLeft, chartBottom)
+                    .lineTo(chartLeft, chartTop)
+                    .stroke()
+                    .moveTo(chartLeft, chartBottom)
+                    .lineTo(chartRight, chartBottom)
+                    .stroke()
+
+                val yTickCount = 4
+                for (i in 1..yTickCount) {
+                    val value = yMin + (yMax - yMin) * (i.toDouble() / yTickCount)
+                    val y = mapY(value)
+                    pdfCanvas.setStrokeColor(DeviceRgb(210, 210, 210))
+                        .moveTo(chartLeft, y)
+                        .lineTo(chartRight, y)
+                        .stroke()
+                    pdfCanvas.setStrokeColor(axisColor)
+                    pdfCanvas.beginText()
+                        .setFontAndSize(font, 8f)
+                        .moveText(chartLeft - 30.0, y - 3.0)
+                        .showText(String.format(Locale.US, "%.2f", value))
+                        .endText()
+                }
+
+                val xTickValues = listOf(0.0, 90.0, 180.0, 270.0, 360.0)
+                xTickValues.forEach { angleTick ->
+                    val x = mapX(angleTick)
+                    pdfCanvas.setStrokeColor(axisColor)
+                        .moveTo(x, chartBottom)
+                        .lineTo(x, chartBottom - 4.0)
+                        .stroke()
+                    pdfCanvas.beginText()
+                        .setFontAndSize(font, 8f)
+                        .moveText(x - 10.0, chartBottom - 14.0)
+                        .showText(String.format(Locale.US, "%.0f°", angleTick))
+                        .endText()
+                }
+
+                val sortedPoints = chartProfile.points.sortedBy { it.angleDegrees }
+                if (sortedPoints.isNotEmpty()) {
+                    pdfCanvas.setStrokeColor(DeviceRgb(52, 120, 246))
+                        .setLineWidth(1.2f)
+                    sortedPoints.forEachIndexed { index, point ->
+                        val x = mapX(point.angleDegrees)
+                        val y = mapY(point.correlation)
+                        if (index == 0) {
+                            pdfCanvas.moveTo(x, y)
+                        } else {
+                            pdfCanvas.lineTo(x, y)
+                        }
+                    }
+                    pdfCanvas.stroke()
+
+                    pdfCanvas.setFillColor(DeviceRgb(52, 120, 246))
+                    sortedPoints.forEach { point ->
+                        val x = mapX(point.angleDegrees)
+                        val y = mapY(point.correlation)
+                        pdfCanvas.circle(x, y, 1.8)
+                    }
+                    pdfCanvas.fill()
+                }
+
+                val referenceX = mapX(chartProfile.referenceAngleDegrees)
+                pdfCanvas.setLineWidth(0.8f)
+                    .setStrokeColor(DeviceRgb(239, 68, 68))
+                    .setLineDash(3f, 3f)
+                    .moveTo(referenceX, chartBottom)
+                    .lineTo(referenceX, chartTop)
+                    .stroke()
+
+                pdfCanvas.restoreState()
+
+                pdfCanvas.beginText()
+                    .setFontAndSize(font, 9f)
+                    .moveText(chartLeft, chartTop + 12.0)
+                    .showText("Профиль корреляции (дискретная косинусная мера)")
+                    .moveText(0.0, -12.0)
+                    .showText(
+                        String.format(
+                            Locale.US,
+                            "Опорный угол: %.2f°",
+                            chartProfile.referenceAngleDegrees
+                        )
+                    )
+                    .endText()
             }
         }
 
