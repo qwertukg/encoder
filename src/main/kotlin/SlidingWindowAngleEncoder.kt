@@ -41,8 +41,6 @@ class SlidingWindowAngleEncoder(
      */
     data class Layer(val arcLengthDegrees: Double, val detectorCount: Int, val overlapFraction: Double)
 
-    val codes = mutableSetOf<Pair<Double, IntArray>>()
-
     /** Полный круг в радианах (2π). */
     val twoPi: Double = 2.0 * PI
 
@@ -113,8 +111,27 @@ class SlidingWindowAngleEncoder(
         }
 
         lastEncodedCode = encodedBits
-        codes.add(angleInRadians to encodedBits)
         return encodedBits
+    }
+
+    /**
+     * Генерирует канонический набор кодов для всей окружности с заданным шагом по градусам.
+     * Используется для расчёта статистик и профилей корреляции согласно DAML.
+     */
+    fun sampleFullCircle(stepDegrees: Double = 1.0): List<Pair<Double, IntArray>> {
+        require(stepDegrees > 0.0) {
+            "Шаг дискретизации должен быть положительным"
+        }
+        val steps = (360.0 / stepDegrees).toInt()
+        require(kotlin.math.abs(steps * stepDegrees - 360.0) < 1e-6) {
+            "Шаг дискретизации должен делить полный круг без остатка"
+        }
+
+        return (0 until steps).map { index ->
+            val angleDegrees = index * stepDegrees
+            val angleRadians = angleDegrees * PI / 180.0
+            angleRadians to encode(angleRadians).copyOf()
+        }
     }
 }
 

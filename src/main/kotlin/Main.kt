@@ -1,37 +1,27 @@
-import SlidingWindowAngleEncoder.Layer
-import kotlin.math.PI
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
 
 fun main() {
-    val encoder = SlidingWindowAngleEncoder(listOf(
-        Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 2.8125,  detectorCount = 128,  overlapFraction = 0.4),
-    ), 256)
+    val encoder = SlidingWindowAngleEncoder(
+        layers = listOf(
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 2.8125, detectorCount = 128, overlapFraction = 0.4),
+        ),
+        codeSizeInBits = 256
+    )
 
-    (0..359).forEach {
-        val angleRadians = it * PI / 180.0
-        val code = encoder.encode(angleRadians)
-        println(code.joinToString("", "[", "]") + ":$it")
-    }
-
+    val canonicalCodes = encoder.sampleFullCircle(stepDegrees = 1.0)
     val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
-    val analysis = backgroundCorrelationAnalyzer.analyzeWithAngles(encoder.codes, 180.0)
-    val stats = analysis.stats
-    println("Mean correlation: ${stats.meanCorrelation}")
-    println("Max correlation: ${stats.maxCorrelation}")
 
-    analysis.correlationProfile?.let { profile ->
-        val referenceRadians = Math.toRadians(profile.referenceAngleDegrees)
-        encoder.drawDetectorsPdf(
-            "./detectors.pdf",
-            markAngleRadians = referenceRadians,
-            correlationProfile = profile
+    embeddedServer(Netty, port = 8080) {
+        detectorsUiModule(
+            encoder = encoder,
+            canonicalCodes = canonicalCodes,
+            backgroundAnalyzer = backgroundCorrelationAnalyzer
         )
-    }
-
-    println("Done")
-
+    }.start(wait = true)
 }
