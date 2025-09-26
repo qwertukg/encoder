@@ -15,9 +15,10 @@ fun main() {
         val angleRadians = it * PI / 180.0
         val code = encoder.encode(angleRadians)
         println(code.joinToString("", "[", "]") + ":$it")
+        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
+
     }
 
-    encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = 30 * PI / 180.0)
 
 
 }
