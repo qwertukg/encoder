@@ -3,8 +3,12 @@ import com.itextpdf.kernel.colors.DeviceRgb
 import com.itextpdf.kernel.font.PdfFontFactory
 import com.itextpdf.kernel.geom.PageSize
 import com.itextpdf.kernel.pdf.PdfDocument
+import com.itextpdf.kernel.pdf.PdfReader
 import com.itextpdf.kernel.pdf.PdfWriter
 import com.itextpdf.kernel.pdf.canvas.PdfCanvas
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Locale
 
 // ----------------- утилиты для работы в градусах -----------------
@@ -108,188 +112,212 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
     markAngleRadians: Double? = null,
     radius: Float = 150f
 ) {
-    PdfDocument(PdfWriter(outputPath)).use { pdf ->
-        val page = pdf.addNewPage(PageSize.A4)
-        val pdfCanvas = PdfCanvas(page)
-        val font = PdfFontFactory.createFont(StandardFonts.COURIER)
+    val outputFile = File(outputPath)
+    outputFile.parentFile?.let { parent ->
+        if (!parent.exists()) parent.mkdirs()
+    }
 
-        // Геометрия страницы
-        val pageCenterX = page.pageSize.width  / 2f
-        val pageCenterY = (page.pageSize.height / 3f) * 1
-
-        // Базовый круг
-        pdfCanvas.setLineWidth(1f)
-            .setStrokeColor(DeviceRgb(0, 0, 0))
-            .circle(pageCenterX.toDouble(), pageCenterY.toDouble(), radius.toDouble())
-            .stroke()
-
-        // Палитра для слоёв
-        val layerColors = listOf(
-            DeviceRgb(52, 120, 246),
-            DeviceRgb(34, 197, 94),
-            DeviceRgb(234, 179, 8),
-            DeviceRgb(239, 68, 68),
-            DeviceRgb(168, 85, 247),
-            DeviceRgb(16, 185, 129),
-            DeviceRgb(59, 130, 246),
-            DeviceRgb(245, 158, 11)
-        )
-
-        // Нормализованный угол подсветки (если задан)
-        val markAngleDeg = markAngleRadians?.let { normalizeDegrees0to360(Math.toDegrees(it)) }
-
-        // Код, полученный по каноническому encode из разд. 4.4.1 DAML (используем для подсветки и подписи).
-        val encodedBitsForMark = markAngleRadians?.let { encode(it) }
-
-        // Подсветка активных детекторов (слой, индекс) берём из готового кода, чтобы визуализация совпадала с encode.
-        val activeDetectors = mutableSetOf<Pair<Int, Int>>()
-        if (encodedBitsForMark != null) {
-            var globalBitOffset = 0
-            layers.forEachIndexed { layerIndex, layer ->
-                for (detectorIndex in 0 until layer.detectorCount) {
-                    val bitIndex = globalBitOffset + detectorIndex
-                    if (bitIndex < encodedBitsForMark.size && encodedBitsForMark[bitIndex] == 1) {
-                        activeDetectors += layerIndex to detectorIndex
+    val tempFilePath = Files.createTempFile("detectors-temp", ".pdf")
+    try {
+        PdfDocument(PdfWriter(tempFilePath.toString())).use { pdf ->
+            if (outputFile.exists()) {
+                PdfDocument(PdfReader(outputFile)).use { existing ->
+                    if (existing.numberOfPages > 0) {
+                        existing.copyPagesTo(1, existing.numberOfPages, pdf)
                     }
                 }
-                globalBitOffset += layer.detectorCount
-            }
-        }
-
-        // Рисуем дуги детекторов каждого слоя
-        var layerIndex = 0
-        var radialOffset = 15.0
-        val layerCount = layers.size.coerceAtLeast(1)
-
-        layers.forEach { layer ->
-            val color = layerColors[layerIndex % layerColors.size]
-
-            val centerStepRadians = (layer.arcLengthDegrees) * Math.PI / 180.0
-            val centerStepDeg = Math.toDegrees(centerStepRadians)
-            val layerPhaseRadians = (layerIndex.toDouble() / layerCount) * centerStepRadians
-            val layerPhaseDeg = Math.toDegrees(layerPhaseRadians)
-
-            val windowWidthDeg = layer.arcLengthDegrees * (1.0 + layer.overlapFraction)
-            val halfWindowDeg = windowWidthDeg / 2.0
-
-            // bbox для дуг этого слоя (слегка увеличиваем радиус на слой)
-            val x1 = (pageCenterX - (radius + radialOffset)).toDouble()
-            val y1 = (pageCenterY - (radius + radialOffset)).toDouble()
-            val x2 = (pageCenterX + (radius + radialOffset)).toDouble()
-            val y2 = (pageCenterY + (radius + radialOffset)).toDouble()
-
-            for (detectorIndex in 0 until layer.detectorCount) {
-                val centerDeg = detectorIndex * centerStepDeg + layerPhaseDeg
-                val startDeg = centerDeg - halfWindowDeg
-                val extentDeg = windowWidthDeg
-
-                val isActive = (layerIndex to detectorIndex) in activeDetectors
-                pdfCanvas.setStrokeColor(color)
-                pdfCanvas.setLineWidth(if (isActive) 2.0f else 1.0f)
-
-                // один вызов — одна непрерывная дуга (без «двух маленьких»)
-                drawArcRotated(
-                    canvas = pdfCanvas,
-                    x1 = x1, y1 = y1, x2 = x2, y2 = y2,
-                    startDeg = startDeg,
-                    extentDeg = extentDeg,
-                    dR = 7.0,
-                    segments = 120,
-                    color = color
-                )
-
             }
 
-            layerIndex++
-            radialOffset += 15.0
-        }
+            val page = pdf.addNewPage(PageSize.A4)
+            val markAngleDeg = markAngleRadians?.let { normalizeDegrees0to360(Math.toDegrees(it)) }
+            markAngleDeg?.let {
+                val labelPrefix = String.format(Locale.US, "%.2f° ", it)
+                page.setPageLabel(null, labelPrefix)
+            }
+            val pdfCanvas = PdfCanvas(page)
+            val font = PdfFontFactory.createFont(StandardFonts.COURIER)
 
-        // Текстовый блок с характеристиками слоёв, чтобы pdf содержал каноническое описание конфигурации из DAML.
-        val textStartX = 40.0
-        val textTopY = page.pageSize.height - 40.0
-        val textLineHeight = 12.0
-        val layerHeader = "Detector layers:"
+            // Геометрия страницы
+            val pageCenterX = page.pageSize.width  / 2f
+            val pageCenterY = (page.pageSize.height / 3f) * 1
 
-        pdfCanvas.beginText()
-            .setFontAndSize(font, 10f)
-            .moveText(textStartX, textTopY)
-            .showText(layerHeader)
-
-        layers.forEachIndexed { index, layer ->
-            val windowWidthDeg = layer.arcLengthDegrees * (1.0 + layer.overlapFraction)
-            val centerStepDeg = layer.arcLengthDegrees
-            val layerDescription = String.format(
-                Locale.getDefault(),
-                "Layer %d: bow %.3f°, count %d, overlap %.2f",
-                index + 1,
-                layer.arcLengthDegrees,
-                layer.detectorCount,
-                layer.overlapFraction,
-            )
-            pdfCanvas.moveText(0.0, -textLineHeight)
-                .showText(layerDescription)
-        }
-        pdfCanvas.endText()
-
-        val layerTextBlockHeight = textLineHeight * (layers.size + 1)
-        val angleInfoTopY = textTopY - layerTextBlockHeight - 16.0
-
-        // (Опционально) Радиальная метка угла markAngleRadians
-        if (markAngleRadians != null) {
-            val dx = (radius * kotlin.math.cos(markAngleRadians)).toFloat()
-            val dy = (radius * kotlin.math.sin(markAngleRadians)).toFloat()
-            pdfCanvas.setStrokeColor(DeviceRgb(0, 0, 0))
-                .setLineWidth(0.8f)
-                .moveTo(pageCenterX.toDouble(), pageCenterY.toDouble())
-                .lineTo((pageCenterX + dx).toDouble(), (pageCenterY + dy).toDouble())
+            // Базовый круг
+            pdfCanvas.setLineWidth(1f)
+                .setStrokeColor(DeviceRgb(0, 0, 0))
+                .circle(pageCenterX.toDouble(), pageCenterY.toDouble(), radius.toDouble())
                 .stroke()
-        }
 
-        // Подписи: угол в градусах и битовый код, оформленный графикой (палочки и пробелы) по канону DAML.
-        if (markAngleDeg != null && encodedBitsForMark != null) {
-            val angleText = String.format(Locale.US, "Angle: %.2f°", markAngleDeg)
+            // Палитра для слоёв
+            val layerColors = listOf(
+                DeviceRgb(52, 120, 246),
+                DeviceRgb(34, 197, 94),
+                DeviceRgb(234, 179, 8),
+                DeviceRgb(239, 68, 68),
+                DeviceRgb(168, 85, 247),
+                DeviceRgb(16, 185, 129),
+                DeviceRgb(59, 130, 246),
+                DeviceRgb(245, 158, 11)
+            )
+
+            // Нормализованный угол подсветки (если задан) вычислен выше (markAngleDeg).
+
+            // Код, полученный по каноническому encode из разд. 4.4.1 DAML (используем для подсветки и подписи).
+            val encodedBitsForMark = markAngleRadians?.let { encode(it) }
+
+            // Подсветка активных детекторов (слой, индекс) берём из готового кода, чтобы визуализация совпадала с encode.
+            val activeDetectors = mutableSetOf<Pair<Int, Int>>()
+            if (encodedBitsForMark != null) {
+                var globalBitOffset = 0
+                layers.forEachIndexed { layerIndex, layer ->
+                    for (detectorIndex in 0 until layer.detectorCount) {
+                        val bitIndex = globalBitOffset + detectorIndex
+                        if (bitIndex < encodedBitsForMark.size && encodedBitsForMark[bitIndex] == 1) {
+                            activeDetectors += layerIndex to detectorIndex
+                        }
+                    }
+                    globalBitOffset += layer.detectorCount
+                }
+            }
+
+            // Рисуем дуги детекторов каждого слоя
+            var layerIndex = 0
+            var radialOffset = 15.0
+            val layerCount = layers.size.coerceAtLeast(1)
+
+            layers.forEach { layer ->
+                val color = layerColors[layerIndex % layerColors.size]
+
+                val centerStepRadians = (layer.arcLengthDegrees) * Math.PI / 180.0
+                val centerStepDeg = Math.toDegrees(centerStepRadians)
+                val layerPhaseRadians = (layerIndex.toDouble() / layerCount) * centerStepRadians
+                val layerPhaseDeg = Math.toDegrees(layerPhaseRadians)
+
+                val windowWidthDeg = layer.arcLengthDegrees * (1.0 + layer.overlapFraction)
+                val halfWindowDeg = windowWidthDeg / 2.0
+
+                // bbox для дуг этого слоя (слегка увеличиваем радиус на слой)
+                val x1 = (pageCenterX - (radius + radialOffset)).toDouble()
+                val y1 = (pageCenterY - (radius + radialOffset)).toDouble()
+                val x2 = (pageCenterX + (radius + radialOffset)).toDouble()
+                val y2 = (pageCenterY + (radius + radialOffset)).toDouble()
+
+                for (detectorIndex in 0 until layer.detectorCount) {
+                    val centerDeg = detectorIndex * centerStepDeg + layerPhaseDeg
+                    val startDeg = centerDeg - halfWindowDeg
+                    val extentDeg = windowWidthDeg
+
+                    val isActive = (layerIndex to detectorIndex) in activeDetectors
+                    pdfCanvas.setStrokeColor(color)
+                    pdfCanvas.setLineWidth(if (isActive) 2.0f else 1.0f)
+
+                    // один вызов — одна непрерывная дуга (без «двух маленьких»)
+                    drawArcRotated(
+                        canvas = pdfCanvas,
+                        x1 = x1, y1 = y1, x2 = x2, y2 = y2,
+                        startDeg = startDeg,
+                        extentDeg = extentDeg,
+                        dR = 7.0,
+                        segments = 120,
+                        color = color
+                    )
+
+                }
+
+                layerIndex++
+                radialOffset += 15.0
+            }
+
+            // Текстовый блок с характеристиками слоёв, чтобы pdf содержал каноническое описание конфигурации из DAML.
+            val textStartX = 40.0
+            val textTopY = page.pageSize.height - 40.0
+            val textLineHeight = 12.0
+            val layerHeader = "Detector layers:"
 
             pdfCanvas.beginText()
                 .setFontAndSize(font, 10f)
-                .moveText(textStartX, angleInfoTopY)
-                .showText(angleText)
-                .moveText(0.0, -textLineHeight)
-                .showText("Code:")
+                .moveText(textStartX, textTopY)
+                .showText(layerHeader)
 
+            layers.forEachIndexed { index, layer ->
+                val windowWidthDeg = layer.arcLengthDegrees * (1.0 + layer.overlapFraction)
+                val centerStepDeg = layer.arcLengthDegrees
+                val layerDescription = String.format(
+                    Locale.getDefault(),
+                    "Layer %d: bow %.3f°, count %d, overlap %.2f",
+                    index + 1,
+                    layer.arcLengthDegrees,
+                    layer.detectorCount,
+                    layer.overlapFraction,
+                )
+                pdfCanvas.moveText(0.0, -textLineHeight)
+                    .showText(layerDescription)
+            }
             pdfCanvas.endText()
 
-            val codeStartX = textStartX
-            val codeTopY = angleInfoTopY - 2 * textLineHeight - 8.0
-            val bitHeight = 10.0
-            val rowSpacing = 14.0
-            val bitSpacing = 2.0
-            val bitsPerRow = 256
-            val activeSegmentColor = DeviceRgb(0, 0, 0)
-            val inactiveSegmentColor = DeviceRgb(200, 200, 200)
+            val layerTextBlockHeight = textLineHeight * (layers.size + 1)
+            val angleInfoTopY = textTopY - layerTextBlockHeight - 16.0
 
-            pdfCanvas.saveState()
-            pdfCanvas.setLineWidth(1f)
-
-            var bitIndex = 0
-            var rowIndex = 0
-            while (bitIndex < encodedBitsForMark.size) {
-                val bitsThisRow = minOf(bitsPerRow, encodedBitsForMark.size - bitIndex)
-                var x = codeStartX
-                val yTop = codeTopY - rowIndex * rowSpacing
-                val yBottom = yTop - bitHeight
-                for (i in 0 until bitsThisRow) {
-                    val bit = encodedBitsForMark[bitIndex + i]
-                    pdfCanvas.setStrokeColor(if (bit == 1) activeSegmentColor else inactiveSegmentColor)
-                    pdfCanvas.moveTo(x, yTop)
-                        .lineTo(x, yBottom)
-                        .stroke()
-                    x += bitSpacing
-                }
-                bitIndex += bitsThisRow
-                rowIndex++
+            // (Опционально) Радиальная метка угла markAngleRadians
+            if (markAngleRadians != null) {
+                val dx = (radius * kotlin.math.cos(markAngleRadians)).toFloat()
+                val dy = (radius * kotlin.math.sin(markAngleRadians)).toFloat()
+                pdfCanvas.setStrokeColor(DeviceRgb(0, 0, 0))
+                    .setLineWidth(0.8f)
+                    .moveTo(pageCenterX.toDouble(), pageCenterY.toDouble())
+                    .lineTo((pageCenterX + dx).toDouble(), (pageCenterY + dy).toDouble())
+                    .stroke()
             }
 
-            pdfCanvas.restoreState()
+            // Подписи: угол в градусах и битовый код, оформленный графикой (палочки и пробелы) по канону DAML.
+            if (markAngleDeg != null && encodedBitsForMark != null) {
+                val angleText = String.format(Locale.US, "Angle: %.2f°", markAngleDeg)
+
+                pdfCanvas.beginText()
+                    .setFontAndSize(font, 10f)
+                    .moveText(textStartX, angleInfoTopY)
+                    .showText(angleText)
+                    .moveText(0.0, -textLineHeight)
+                    .showText("Code:")
+
+                pdfCanvas.endText()
+
+                val codeStartX = textStartX
+                val codeTopY = angleInfoTopY - 2 * textLineHeight - 8.0
+                val bitHeight = 10.0
+                val rowSpacing = 14.0
+                val bitSpacing = 2.0
+                val bitsPerRow = 256
+                val activeSegmentColor = DeviceRgb(0, 0, 0)
+                val inactiveSegmentColor = DeviceRgb(200, 200, 200)
+
+                pdfCanvas.saveState()
+                pdfCanvas.setLineWidth(1f)
+
+                var bitIndex = 0
+                var rowIndex = 0
+                while (bitIndex < encodedBitsForMark.size) {
+                    val bitsThisRow = minOf(bitsPerRow, encodedBitsForMark.size - bitIndex)
+                    var x = codeStartX
+                    val yTop = codeTopY - rowIndex * rowSpacing
+                    val yBottom = yTop - bitHeight
+                    for (i in 0 until bitsThisRow) {
+                        val bit = encodedBitsForMark[bitIndex + i]
+                        pdfCanvas.setStrokeColor(if (bit == 1) activeSegmentColor else inactiveSegmentColor)
+                        pdfCanvas.moveTo(x, yTop)
+                            .lineTo(x, yBottom)
+                            .stroke()
+                        x += bitSpacing
+                    }
+                    bitIndex += bitsThisRow
+                    rowIndex++
+                }
+
+                pdfCanvas.restoreState()
+            }
         }
+
+        Files.move(tempFilePath, outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    } finally {
+        Files.deleteIfExists(tempFilePath)
     }
 }
