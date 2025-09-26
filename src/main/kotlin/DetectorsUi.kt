@@ -1,11 +1,15 @@
 import io.ktor.server.application.*
 import io.ktor.server.html.*
+import io.ktor.server.request.*
+import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.html.*
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.PI
 import kotlin.math.cos
-import kotlin.math.min
 import kotlin.math.sin
 
 private const val EPS_DEG = 1e-7
@@ -17,9 +21,10 @@ private const val EPS_DEG = 1e-7
  */
 fun Application.detectorsUiModule(
     encoder: SlidingWindowAngleEncoder,
-    canonicalCodes: List<Pair<Double, IntArray>>,
     backgroundAnalyzer: BackgroundCorrelationAnalyzer
 ) {
+    val canonicalCodesRef = AtomicReference(encoder.sampleFullCircle(stepDegrees = 1.0))
+
     routing {
         get("/") {
             val angleParam = call.request.queryParameters["angle"]
@@ -27,7 +32,7 @@ fun Application.detectorsUiModule(
             val angleRadians = angleDeg * PI / 180.0
             val encoded = encoder.encode(angleRadians)
             val activeDetectors = collectActiveDetectors(encoded, encoder.layers)
-            val analysis = backgroundAnalyzer.analyzeWithAngles(canonicalCodes, angleDeg)
+            val analysis = backgroundAnalyzer.analyzeWithAngles(canonicalCodesRef.get(), angleDeg)
             val stats = analysis.stats
             val profile = analysis.correlationProfile
 
@@ -40,6 +45,14 @@ fun Application.detectorsUiModule(
             val correlationSvg = profile?.let { buildCorrelationSvg(it) }
             val encodedBitsBlock = formatCodeBlocks(encoded)
             val activeBitCount = encoded.count { it != 0 }
+
+            val configStatus = call.request.queryParameters["configStatus"]
+            val configMessage = call.request.queryParameters["configMessage"]
+            val feedback = when (configStatus) {
+                "ok" -> ConfigFeedback.Success(configMessage ?: "Конфигурация слоёв обновлена по канону DAML.")
+                "error" -> ConfigFeedback.Error(configMessage ?: "Не удалось применить конфигурацию слоёв.")
+                else -> null
+            }
 
             call.respondHtml {
                 head {
@@ -83,6 +96,41 @@ fun Application.detectorsUiModule(
                                     color: #fff;
                                     font-weight: 600;
                                     cursor: pointer;
+                                }
+                                form.layer-config {
+                                    display: flex;
+                                    flex-direction: column;
+                                    gap: 16px;
+                                }
+                                form.layer-config textarea {
+                                    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+                                    min-height: 160px;
+                                    border-radius: 12px;
+                                    border: 1px solid #d1d5db;
+                                    padding: 12px 14px;
+                                    resize: vertical;
+                                }
+                                form.layer-config .inputs {
+                                    display: flex;
+                                    flex-wrap: wrap;
+                                    gap: 16px;
+                                }
+                                form.layer-config input[type="number"] {
+                                    padding: 8px 12px;
+                                    border-radius: 8px;
+                                    border: 1px solid #d1d5db;
+                                    background: #fff;
+                                    min-width: 120px;
+                                }
+                                form.layer-config input[type="submit"] {
+                                    padding: 10px 22px;
+                                    border-radius: 10px;
+                                    border: none;
+                                    background: linear-gradient(135deg, #2563eb, #9333ea);
+                                    color: #fff;
+                                    font-weight: 600;
+                                    cursor: pointer;
+                                    align-self: flex-start;
                                 }
                                 .grid {
                                     display: grid;
@@ -156,6 +204,22 @@ fun Application.detectorsUiModule(
                                     font-size: 13px;
                                     color: #6b7280;
                                 }
+                                .config-message {
+                                    padding: 12px 16px;
+                                    border-radius: 10px;
+                                    font-size: 14px;
+                                    font-weight: 500;
+                                }
+                                .config-message.success {
+                                    background: rgba(34, 197, 94, 0.12);
+                                    color: #166534;
+                                    border: 1px solid rgba(34, 197, 94, 0.4);
+                                }
+                                .config-message.error {
+                                    background: rgba(248, 113, 113, 0.12);
+                                    color: #991b1b;
+                                    border: 1px solid rgba(248, 113, 113, 0.4);
+                                }
                                 """.trimIndent()
                             )
                         }
@@ -228,6 +292,39 @@ fun Application.detectorsUiModule(
                     br
                     div(classes = "card") {
                         h2 { +"Конфигурация слоёв" }
+                        feedback?.let { message ->
+                            div(classes = "config-message ${if (message is ConfigFeedback.Success) "success" else "error"}") {
+                                +message.text
+                            }
+                        }
+                        form(classes = "layer-config") {
+                            method = FormMethod.post
+                            action = "/layers"
+                            textArea {
+                                name = "layersConfig"
+                                +buildLayerConfigText(encoder.layers)
+                            }
+                            div(classes = "inputs") {
+                                div {
+                                    label {
+                                        htmlFor = "codeSize"
+                                        +"Размер кодового слова (≥ сумма детекторов):"
+                                    }
+                                    numberInput(name = "codeSize") {
+                                        id = "codeSize"
+                                        min = "1"
+                                        value = encoder.codeSizeInBits.toString()
+                                    }
+                                }
+                                hiddenInput(name = "angle") {
+                                    value = String.format(Locale.US, "%.2f", angleDeg)
+                                }
+                            }
+                            submitInput { value = "Применить конфигурацию" }
+                        }
+                        p(classes = "note") {
+                            +"Каждая строка описывает слой: длина дуги; число детекторов; перекрытие (см. разд. 4.4.1 DAML)."
+                        }
                         table(classes = "layers") {
                             thead {
                                 tr {
@@ -247,10 +344,103 @@ fun Application.detectorsUiModule(
                                     }
                                 }
                             }
+                            tfoot {
+                                tr {
+                                    td { +"Σ" }
+                                    td { +"—" }
+                                    td { +encoder.layers.sumOf { it.detectorCount }.toString() }
+                                    td { +"—" }
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+        post("/layers") {
+            val params = call.receiveParameters()
+            val rawConfig = params["layersConfig"] ?: ""
+            val angleParam = params["angle"]?.takeIf { it.isNotBlank() }
+            val codeSizeParam = params["codeSize"]?.takeIf { it.isNotBlank() }
+
+            try {
+                val layers = parseLayersConfiguration(rawConfig)
+                val requestedCodeSize = codeSizeParam?.toIntOrNull()?.also {
+                    require(it > 0) { "Размер кодового слова должен быть положительным" }
+                }
+
+                encoder.reconfigure(layers, requestedCodeSize)
+                canonicalCodesRef.set(encoder.sampleFullCircle(stepDegrees = 1.0))
+
+                call.respondRedirect(buildConfigRedirectUrl(angleParam, "ok", "Конфигурация слоёв обновлена."))
+            } catch (ex: IllegalArgumentException) {
+                call.respondRedirect(
+                    buildConfigRedirectUrl(angleParam, "error", ex.message ?: "Некорректные параметры.")
+                )
+            }
+        }
+    }
+}
+
+private sealed interface ConfigFeedback {
+    val text: String
+
+    class Success(override val text: String) : ConfigFeedback
+    class Error(override val text: String) : ConfigFeedback
+}
+
+private fun buildLayerConfigText(layers: List<SlidingWindowAngleEncoder.Layer>): String =
+    layers.joinToString("\n") { layer ->
+        listOf(
+            String.format(Locale.US, "%.6f", layer.arcLengthDegrees),
+            layer.detectorCount.toString(),
+            String.format(Locale.US, "%.4f", layer.overlapFraction)
+        ).joinToString("; ")
+    }
+
+private fun parseLayersConfiguration(raw: String): List<SlidingWindowAngleEncoder.Layer> {
+    val lines = raw.lineSequence()
+        .mapIndexedNotNull { index, line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) return@mapIndexedNotNull null
+            val parts = trimmed.split(';', ',', ' ', '\t')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            require(parts.size == 3) {
+                "Строка ${index + 1}: ожидалось три параметра (длина; детекторы; перекрытие)"
+            }
+
+            val arcLength = parts[0].replace(',', '.').toDoubleOrNull()
+                ?: throw IllegalArgumentException("Строка ${index + 1}: не удалось прочитать длину дуги")
+            val detectorCount = parts[1].toIntOrNull()
+                ?: throw IllegalArgumentException("Строка ${index + 1}: количество детекторов должно быть целым")
+            val overlap = parts[2].replace(',', '.').toDoubleOrNull()
+                ?: throw IllegalArgumentException("Строка ${index + 1}: перекрытие должно быть числом")
+
+            SlidingWindowAngleEncoder.Layer(
+                arcLengthDegrees = arcLength,
+                detectorCount = detectorCount,
+                overlapFraction = overlap
+            )
+        }
+        .toList()
+
+    require(lines.isNotEmpty()) { "Нужно задать хотя бы один слой" }
+    return lines
+}
+
+private fun buildConfigRedirectUrl(angle: String?, status: String, message: String): String {
+    val queryParams = mutableListOf<String>()
+    if (!angle.isNullOrBlank()) {
+        queryParams += "angle=" + URLEncoder.encode(angle, StandardCharsets.UTF_8)
+    }
+    queryParams += "configStatus=" + URLEncoder.encode(status, StandardCharsets.UTF_8)
+    queryParams += "configMessage=" + URLEncoder.encode(message, StandardCharsets.UTF_8)
+    return buildString {
+        append('/')
+        if (queryParams.isNotEmpty()) {
+            append('?')
+            append(queryParams.joinToString("&"))
         }
     }
 }
