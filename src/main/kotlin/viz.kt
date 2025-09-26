@@ -1,4 +1,4 @@
-import com.itextpdf.io.font.constants.StandardFonts
+import com.itextpdf.io.font.PdfEncodings
 import com.itextpdf.kernel.colors.DeviceRgb
 import com.itextpdf.kernel.font.PdfFontFactory
 import com.itextpdf.kernel.geom.PageSize
@@ -111,7 +111,17 @@ fun SlidingWindowAngleEncoder.drawDetectorsPdf(
     PdfDocument(PdfWriter(outputPath)).use { pdf ->
         val page = pdf.addNewPage(PageSize.A4)
         val pdfCanvas = PdfCanvas(page)
-        val font = PdfFontFactory.createFont(StandardFonts.COURIER)
+        val font = SlidingWindowAngleEncoder::class.java.classLoader
+            .getResourceAsStream("fonts/DejaVuSans.ttf")
+            ?.use { stream ->
+                val fontBytes = stream.readBytes()
+                PdfFontFactory.createFont(
+                    fontBytes,
+                    PdfEncodings.IDENTITY_H,
+                    PdfFontFactory.EmbeddingStrategy.PREFER_EMBEDDED
+                )
+            }
+            ?: error("Не удалось загрузить шрифт DejaVuSans.ttf из ресурсов")
 
         // Геометрия страницы
         val pageCenterX = page.pageSize.width  / 2f
