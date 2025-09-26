@@ -42,7 +42,7 @@ class SlidingWindowAngleEncoder(
     data class Layer(val arcLengthDegrees: Double, val detectorCount: Int, val overlapFraction: Double)
 
     /** Полный круг в радианах (2π). */
-    val fullCircleInRadians: Double = 2.0 * PI
+    val twoPi: Double = 2.0 * PI
 
     /** Постоянный множитель перевода градусов в радианы (используется ниже много раз). */
     private val degreesToRadians: Double = PI / 180.0
@@ -73,7 +73,6 @@ class SlidingWindowAngleEncoder(
         val layerCount = layers.size // требуется для расчёта фазового сдвига слоя
 
         // Нормализуем угол в [0, 2π), чтобы гарантировать топологическую замкнутость по канону (разд. 4.4.1).
-        val twoPi = fullCircleInRadians
         var angleWrapped = angleInRadians % twoPi
         if (angleWrapped < 0.0) angleWrapped += twoPi
 

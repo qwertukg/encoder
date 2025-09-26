@@ -17,7 +17,7 @@ fun main() {
         println(code.joinToString("", "[", "]") + ":$it")
     }
 
-    encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = 15 * PI / 180.0)
+    encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = 30 * PI / 180.0)
 
 
 }
