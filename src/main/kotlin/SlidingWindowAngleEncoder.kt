@@ -1,14 +1,23 @@
 import kotlin.math.PI
 
 /**
- * SlidingWindowAngleEncoder — версия с полностью развёрнутыми именами и комментариями.
+ * SlidingWindowAngleEncoder — реализация канонического «скользящего окна» из разд. 4.4.1 DAML.
+ *
+ * Алгоритм опирается на ключевые идеи статьи:
+ * 1) Код строится из набора детекторов, которые «обходят» окружность и образуют топологически
+ *    замкнутое пространство за счёт гранично-замкнутых окон (boundary closed windows).
+ * 2) Слои детекторов имеют собственный радиальный шаг и фазовый сдвиг, что повторяет принцип
+ *    многочастотного покрытия круга (аналог Figure 5 и Figure 7 из статьи).
+ * 3) Плотность и перекрытие управляются параметрами arcLengthDegrees и overlapFraction, что
+ *    соответствует требованию поддерживать схожую плотность активных битов на всём диапазоне
+ *    углов.
  *
  * СОГЛАШЕНИЕ (contract) — внутри НЕТ проверок корректности входных данных:
  * 1) Сумма по слоям: Σ layers[k].detectorCount <= codeSizeInBits — иначе индекс выйдет за границы массива.
  * 2) Для каждого слоя: arcLengthDegrees > 0; detectorCount > 0; overlapFraction >= 0.
  * 3) Порядок слоёв значим (List сохраняет порядок конкатенации битов).
  * 4) Итоговая ширина окна слоя: windowWidthDegrees = arcLengthDegrees * (1 + overlapFraction).
- * 5) Шаг центров детекторов: centerStepRadians = toRad(arcLengthDegrees) (поворот на длину дуги слоя).
+ * 5) Шаг центров детекторов: centerStepRadians = arcLengthDegrees * π / 180 (поворот на длину дуги слоя).
  * 6) Фаза слоя k: layerPhaseRadians = (k / layerCount) * centerStepRadians; первый слой стартует с 0.
  */
 class SlidingWindowAngleEncoder(
@@ -35,6 +44,9 @@ class SlidingWindowAngleEncoder(
     /** Полный круг в радианах (2π). */
     val fullCircleInRadians: Double = 2.0 * PI
 
+    /** Постоянный множитель перевода градусов в радианы (используется ниже много раз). */
+    private val degreesToRadians: Double = PI / 180.0
+
     /**
      * Последний сгенерированный код (обновляется при каждом encode).
      * Сделано var + private set, чтобы извне читался, но не изменялся.
@@ -45,17 +57,10 @@ class SlidingWindowAngleEncoder(
     /**
      * Кодирует угол (в радианах) в разряжённый битовый вектор фиксированной длины [codeSizeInBits].
      *
-     * Логика:
-         *  - для каждого слоя с индексом layerIndex считаем:
-         *      windowWidthRadians = toRad(arcLengthDegrees * (1 + overlapFraction))   // итоговая ширина окна (рад)
-         *      centerStepRadians  = toRad(arcLengthDegrees)                           // шаг центров (рад)
-         *      layerPhaseRadians  = (layerIndex / layerCount) * centerStepRadians     // фазовый сдвиг слоя (рад)
-     *  - для каждого детектора с индексом detectorIndex:
-     *      detectorCenterRadians = detectorIndex * centerStepRadians + layerPhaseRadians
-     *  - детектор активен, если:
-     *      normalizedAngularDifference(angleInRadians - detectorCenterRadians) ∈ [-windowWidthRadians/2, windowWidthRadians/2)
-     *  - активные детекторы «зажигают» биты по индексам:
-     *      globalBitOffset + detectorIndex; globalBitOffset накапливается по слоям
+     * Основные шаги:
+     * - для каждого слоя рассчитываются ширина окна, шаг центров и фазовый сдвиг;
+     * - для каждого детектора слоя оценивается граница окна и проверяется принадлежность нормализованного угла;
+     * - детекторы, в чьё окно попал угол, активируют соответствующие биты итогового кода.
      *
      * ВНИМАНИЕ: никаких защит от выхода за границы массива НЕТ (см. контракт сверху).
      *
@@ -63,40 +68,44 @@ class SlidingWindowAngleEncoder(
      * @return массив IntArray из 0/1 длиной [codeSizeInBits]
      */
     fun encode(angleInRadians: Double): IntArray {
-        val encodedBits = IntArray(codeSizeInBits)
-        var globalBitOffset = 0
-        val layerCount = layers.size
+        val encodedBits = IntArray(codeSizeInBits) // итоговый разрежённый код
+        var globalBitOffset = 0 // смещение бита для текущего слоя
+        val layerCount = layers.size // требуется для расчёта фазового сдвига слоя
 
-        // нормализуем угол один раз в [0, 2π)
-        val twoPi = 2.0 * PI
+        // Нормализуем угол в [0, 2π), чтобы гарантировать топологическую замкнутость по канону (разд. 4.4.1).
+        val twoPi = fullCircleInRadians
         var angleWrapped = angleInRadians % twoPi
         if (angleWrapped < 0.0) angleWrapped += twoPi
 
         layers.forEachIndexed { layerIndex, layer ->
-            val windowWidthRadians = (layer.arcLengthDegrees * (1.0 + layer.overlapFraction)) * PI / 180.0
+            // Ширина окна = длина дуги * (1 + overlapFraction); половину храним для удобства.
+            val windowWidthRadians = layer.arcLengthDegrees * (1.0 + layer.overlapFraction) * degreesToRadians
             val halfWindowWidthRadians = windowWidthRadians / 2.0
-            val centerStepRadians = (layer.arcLengthDegrees) * PI / 180.0
+            // Шаг центров детекторов соответствует длине дуги слоя (см. DAML, Figure 5).
+            val centerStepRadians = layer.arcLengthDegrees * degreesToRadians
+            // Фазовый сдвиг слоя равномерно распределяет окна по каналу, предотвращая резонанс.
             val layerPhaseRadians = (layerIndex.toDouble() / layerCount) * centerStepRadians
 
             for (detectorIndex in 0 until layer.detectorCount) {
+                // Центр детектора = индекс * шаг + фазовый сдвиг.
                 val center = detectorIndex * centerStepRadians + layerPhaseRadians
                 val startRaw = center - halfWindowWidthRadians
                 val endRaw   = center + halfWindowWidthRadians
 
-                // сворачиваем границы в [0, 2π)
+                // Сворачиваем границы в [0, 2π) — реализуем boundary closed окно (см. Figure 7).
                 var start = startRaw % twoPi; if (start < 0.0) start += twoPi
                 var end   = endRaw   % twoPi; if (end   < 0.0) end   += twoPi
 
-                // правая граница ИСКЛЮЧИТСЯ (как и раньше), левая включается
+                // Правая граница исключается, левая включается — один и тот же угол не активирует два окна.
                 val hit = if (start <= end) {
                     angleWrapped >= start && angleWrapped < end
                 } else {
-                    // окно пересекает 0: два куска
+                    // Окно пересекает 0 → проверяем оба сегмента (см. Figure 7 в статье).
                     angleWrapped >= start || angleWrapped < end
                 }
 
                 if (hit) {
-                    encodedBits[globalBitOffset + detectorIndex] = 1
+                    encodedBits[globalBitOffset + detectorIndex] = 1 // активируем соответствующий бит
                 }
             }
             globalBitOffset += layer.detectorCount
