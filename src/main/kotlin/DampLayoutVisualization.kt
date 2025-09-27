@@ -1,4 +1,7 @@
 import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.ceil
+import kotlin.math.sqrt
 
 /**
  * DampLayoutVisualization описывает каноническую 2D-раскладку кодов согласно разд. 5.5 DAML.
@@ -12,8 +15,9 @@ data class DampLayoutVisualization(
 }
 
 /**
- * Формирует визуализацию канонической раскладки по статье DAML: сначала строится список кодов,
- * затем применяется алгоритм DampLayout2D, а результат переводится в координаты с привязкой к углам.
+ * Формирует визуализацию канонической раскладки по статье DAML: набор углов сортируется,
+ * после чего каждый угол сопоставляется с ближайшей свободной ячейкой сетки по полярному углу
+ * относительно центра пинвила (см. описание канонической 2D-раскладки в разделе 5.5 DAML).
  */
 fun buildDampLayoutVisualization(
     samples: List<Pair<Double, IntArray>>,
@@ -21,46 +25,77 @@ fun buildDampLayoutVisualization(
 ): DampLayoutVisualization {
     require(samples.isNotEmpty()) { "Нужно предоставить хотя бы один код для раскладки" }
 
-    val signatureToAngle = HashMap<String, Double>(samples.size)
-    samples.forEach { (angleRadians, code) ->
-        val angleDegrees = normalizeDegrees((angleRadians * 180.0) / PI)
-        val signature = codeSignature(code)
-        signatureToAngle.putIfAbsent(signature, angleDegrees)
-    }
-
-    val codes = samples.map { it.second }
-    val layoutMatrix = DampLayout2D(codes, parameters).layout()
-    val height = layoutMatrix.size
-    val width = layoutMatrix.firstOrNull()?.size ?: 0
-
-    val points = mutableListOf<DampLayoutVisualization.Point>()
-    layoutMatrix.forEachIndexed { y, row ->
-        row.forEachIndexed { x, code ->
-            if (code != null) {
-                val signature = codeSignature(code)
-                val angle = signatureToAngle[signature]
-                    ?: error("Не удалось сопоставить угол для кода с подписью $signature")
-                points += DampLayoutVisualization.Point(x, y, angle)
-            }
-        }
-    }
-
-    return DampLayoutVisualization(width, height, points)
-}
-
-private fun codeSignature(code: IntArray): String {
-    val builder = StringBuilder()
-    code.forEachIndexed { index, value ->
-        if (value != 0) {
-            if (builder.isNotEmpty()) builder.append(',')
-            builder.append(index)
-        }
-    }
-    return builder.toString()
+    val angles = samples.map { (angleRadians, _) ->
+        normalizeDegrees((angleRadians * 180.0) / PI)
+    }.sorted()
+    val side = computePinwheelSide(angles.size, parameters.marginFraction)
+    val points = assignAnglesToPinwheel(angles, side, side)
+    return DampLayoutVisualization(side, side, points)
 }
 
 private fun normalizeDegrees(angle: Double): Double {
     var result = angle % 360.0
     if (result < 0.0) result += 360.0
     return result
+}
+
+private fun assignAnglesToPinwheel(
+    angles: List<Double>,
+    width: Int,
+    height: Int
+): List<DampLayoutVisualization.Point> {
+    data class Cell(val x: Int, val y: Int, val angle: Double, val radius: Double)
+
+    val centerX = (width - 1) / 2.0
+    val centerY = (height - 1) / 2.0
+    val available = ArrayList<Cell>(width * height)
+    for (y in 0 until height) {
+        for (x in 0 until width) {
+            val dx = x - centerX
+            val dy = centerY - y
+            val radius = sqrt(dx * dx + dy * dy)
+            val polar = if (radius == 0.0) 0.0 else normalizeDegrees(Math.toDegrees(atan2(dy, dx)))
+            available += Cell(x, y, polar, radius)
+        }
+    }
+
+    val remaining = available.toMutableList()
+    val result = ArrayList<DampLayoutVisualization.Point>(angles.size)
+    for (angle in angles) {
+        var bestIndex = -1
+        var bestDiff = Double.POSITIVE_INFINITY
+        var bestRadius = Double.POSITIVE_INFINITY
+        var bestAngle = Double.POSITIVE_INFINITY
+        for (index in remaining.indices) {
+            val cell = remaining[index]
+            val diff = angularDistance(cell.angle, angle)
+            if (diff < bestDiff - 1e-9 ||
+                (kotlin.math.abs(diff - bestDiff) <= 1e-9 && cell.radius < bestRadius - 1e-9) ||
+                (kotlin.math.abs(diff - bestDiff) <= 1e-9 && kotlin.math.abs(cell.radius - bestRadius) <= 1e-9 && cell.angle < bestAngle - 1e-9)
+            ) {
+                bestIndex = index
+                bestDiff = diff
+                bestRadius = cell.radius
+                bestAngle = cell.angle
+            }
+        }
+        if (bestIndex == -1) {
+            throw IllegalStateException("Недостаточно ячеек для размещения всех углов пинвила")
+        }
+        val cell = remaining.removeAt(bestIndex)
+        result += DampLayoutVisualization.Point(cell.x, cell.y, angle)
+    }
+    return result
+}
+
+private fun computePinwheelSide(pointCount: Int, marginFraction: Double): Int {
+    val safetyMargin = if (marginFraction.isFinite() && marginFraction > 0.0) marginFraction else 0.0
+    val totalSlots = ceil(pointCount * (1.0 + safetyMargin)).toInt().coerceAtLeast(pointCount)
+    val side = ceil(sqrt(totalSlots.toDouble())).toInt().coerceAtLeast(1)
+    return if (side % 2 == 0) side + 1 else side
+}
+
+private fun angularDistance(first: Double, second: Double): Double {
+    val diff = kotlin.math.abs(normalizeDegrees(first - second))
+    return kotlin.math.min(diff, 360.0 - diff)
 }
