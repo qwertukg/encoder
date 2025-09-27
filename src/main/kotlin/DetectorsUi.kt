@@ -679,8 +679,36 @@ private fun buildLayoutSvg(layout: DampLayoutVisualization): String {
         val cx = padding + (point.x + 0.5) * cellSize
         val cy = padding + (point.y + 0.5) * cellSize
         val color = hsvToHex(point.angleDegrees)
+
+        val angleRad = point.angleDegrees * PI / 180.0
+        val dirX = kotlin.math.cos(angleRad)
+        val dirY = -kotlin.math.sin(angleRad)
+        val arrowLength = cellSize * 0.6
+        val headLength = arrowLength * 0.25
+        val headWidth = headLength * 0.9
+
+        val startX = cx - dirX * (pointRadius * 0.2)
+        val startY = cy - dirY * (pointRadius * 0.2)
+        val endX = cx + dirX * arrowLength
+        val endY = cy + dirY * arrowLength
+
+        val baseX = endX - dirX * headLength
+        val baseY = endY - dirY * headLength
+        val normalX = -dirY
+        val normalY = dirX
+        val leftX = baseX + normalX * (headWidth / 2)
+        val leftY = baseY + normalY * (headWidth / 2)
+        val rightX = baseX - normalX * (headWidth / 2)
+        val rightY = baseY - normalY * (headWidth / 2)
+
         builder.appendLine(
             """<circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(pointRadius)}" fill="$color"/>"""
+        )
+        builder.appendLine(
+            """<line x1="${fmt(startX)}" y1="${fmt(startY)}" x2="${fmt(baseX)}" y2="${fmt(baseY)}" stroke="$color" stroke-width="1.2" stroke-linecap="round"/>"""
+        )
+        builder.appendLine(
+            """<polygon points="${fmt(endX)},${fmt(endY)} ${fmt(leftX)},${fmt(leftY)} ${fmt(rightX)},${fmt(rightY)}" fill="$color"/>"""
         )
     }
 
