@@ -647,7 +647,7 @@ private fun buildCorrelationSvg(profile: BackgroundCorrelationAnalyzer.Correlati
 
 private fun buildLayoutSvg(layout: DampLayoutVisualization): String {
     if (layout.width <= 0 || layout.height <= 0) {
-        return """<svg viewBox=\"0 0 120 80\" width=\"120\" height=\"80\" xmlns=\"http://www.w3.org/2000/svg\"><text x=\"60\" y=\"45\" fill=\"#6b7280\" font-size=\"12\" text-anchor=\"middle\">Нет данных</text></svg>"""
+        return """<svg viewBox="0 0 120 80" width="120" height="80" xmlns="http://www.w3.org/2000/svg"><text x="60" y="45" fill="#6b7280" font-size="12" text-anchor="middle">Нет данных</text></svg>"""
     }
 
     val cellSize = 18.0
@@ -658,9 +658,9 @@ private fun buildLayoutSvg(layout: DampLayoutVisualization): String {
     val occupancy = layout.points.associateBy { it.x to it.y }
 
     val builder = StringBuilder()
-    builder.appendLine("""<svg viewBox=\"0 0 ${fmt(svgWidth)} ${fmt(svgHeight)}\" width=\"${fmt(svgWidth)}\" height=\"${fmt(svgHeight)}\" xmlns=\"http://www.w3.org/2000/svg\">""")
-    builder.appendLine("""<rect x=\"0\" y=\"0\" width=\"${fmt(svgWidth)}\" height=\"${fmt(svgHeight)}\" fill=\"#ffffff\" rx=\"18\"/>""")
-    builder.appendLine("""<g stroke=\"#e5e7eb\" stroke-width=\"0.6\">""")
+    builder.appendLine("""<svg viewBox="0 0 ${fmt(svgWidth)} ${fmt(svgHeight)}" width="${fmt(svgWidth)}" height="${fmt(svgHeight)}" xmlns="http://www.w3.org/2000/svg">""")
+    builder.appendLine("""<rect x="0" y="0" width="${fmt(svgWidth)}" height="${fmt(svgHeight)}" fill="#ffffff" rx="18"/>""")
+    builder.appendLine("""<g stroke="#e5e7eb" stroke-width="0.6">""")
     for (y in 0 until layout.height) {
         for (x in 0 until layout.width) {
             val top = padding + y * cellSize
@@ -668,19 +668,19 @@ private fun buildLayoutSvg(layout: DampLayoutVisualization): String {
             val occupied = occupancy.containsKey(x to y)
             val fill = if (occupied) "#f1f5f9" else "#ffffff"
             builder.appendLine(
-                """<rect x=\"${fmt(left)}\" y=\"${fmt(top)}\" width=\"${fmt(cellSize)}\" height=\"${fmt(cellSize)}\" fill=\"$fill\"/>"""
+                """<rect x="${fmt(left)}" y="${fmt(top)}" width="${fmt(cellSize)}" height="${fmt(cellSize)}" fill="$fill"/>"""
             )
         }
     }
     builder.appendLine("</g>")
-    builder.appendLine("""<g stroke=\"#111827\" stroke-width=\"0.4\">""")
+    builder.appendLine("""<g stroke="#111827" stroke-width="0.4">""")
 
     layout.points.forEach { point ->
         val cx = padding + (point.x + 0.5) * cellSize
         val cy = padding + (point.y + 0.5) * cellSize
         val color = hsvToHex(point.angleDegrees)
         builder.appendLine(
-            """<circle cx=\"${fmt(cx)}\" cy=\"${fmt(cy)}\" r=\"${fmt(pointRadius)}\" fill=\"$color\"/>"""
+            """<circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(pointRadius)}" fill="$color"/>"""
         )
     }
 
