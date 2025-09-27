@@ -651,24 +651,40 @@ private fun buildLayoutSvg(layout: DampLayoutVisualization): String {
     }
 
     val cellSize = 18.0
-    val padding = 28.0
+    val padding = 32.0
     val svgWidth = padding * 2 + layout.width * cellSize
     val svgHeight = padding * 2 + layout.height * cellSize
-    val pointRadius = cellSize * 0.35
+    val pointRadius = cellSize * 0.32
+    val occupancy = layout.points.associateBy { it.x to it.y }
 
     val builder = StringBuilder()
     builder.appendLine("""<svg viewBox=\"0 0 ${fmt(svgWidth)} ${fmt(svgHeight)}\" width=\"${fmt(svgWidth)}\" height=\"${fmt(svgHeight)}\" xmlns=\"http://www.w3.org/2000/svg\">""")
     builder.appendLine("""<rect x=\"0\" y=\"0\" width=\"${fmt(svgWidth)}\" height=\"${fmt(svgHeight)}\" fill=\"#ffffff\" rx=\"18\"/>""")
+    builder.appendLine("""<g stroke=\"#e5e7eb\" stroke-width=\"0.6\">""")
+    for (y in 0 until layout.height) {
+        for (x in 0 until layout.width) {
+            val top = padding + y * cellSize
+            val left = padding + x * cellSize
+            val occupied = occupancy.containsKey(x to y)
+            val fill = if (occupied) "#f1f5f9" else "#ffffff"
+            builder.appendLine(
+                """<rect x=\"${fmt(left)}\" y=\"${fmt(top)}\" width=\"${fmt(cellSize)}\" height=\"${fmt(cellSize)}\" fill=\"$fill\"/>"""
+            )
+        }
+    }
+    builder.appendLine("</g>")
+    builder.appendLine("""<g stroke=\"#111827\" stroke-width=\"0.4\">""")
 
     layout.points.forEach { point ->
         val cx = padding + (point.x + 0.5) * cellSize
         val cy = padding + (point.y + 0.5) * cellSize
         val color = hsvToHex(point.angleDegrees)
         builder.appendLine(
-            """<circle cx=\"${fmt(cx)}\" cy=\"${fmt(cy)}\" r=\"${fmt(pointRadius)}\" fill=\"$color\" stroke=\"#111827\" stroke-width=\"0.5\"/>"""
+            """<circle cx=\"${fmt(cx)}\" cy=\"${fmt(cy)}\" r=\"${fmt(pointRadius)}\" fill=\"$color\"/>"""
         )
     }
 
+    builder.appendLine("</g>")
     builder.appendLine("</svg>")
     return builder.toString()
 }
