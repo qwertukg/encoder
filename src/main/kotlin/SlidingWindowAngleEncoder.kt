@@ -1,3 +1,4 @@
+import kotlin.jvm.Volatile
 import kotlin.math.PI
 
 /**
@@ -12,7 +13,7 @@ import kotlin.math.PI
  *    соответствует требованию поддерживать схожую плотность активных битов на всём диапазоне
  *    углов.
  *
- * СОГЛАШЕНИЕ (contract) — внутри НЕТ проверок корректности входных данных:
+ * СОГЛАШЕНИЕ (contract) — корректность параметров проверяется при создании/переконфигурации:
  * 1) Сумма по слоям: Σ layers[k].detectorCount <= codeSizeInBits — иначе индекс выйдет за границы массива.
  * 2) Для каждого слоя: arcLengthDegrees > 0; detectorCount > 0; overlapFraction >= 0.
  * 3) Порядок слоёв значим (List сохраняет порядок конкатенации битов).
@@ -22,7 +23,7 @@ import kotlin.math.PI
  */
 class SlidingWindowAngleEncoder(
     /** Конфигурации слоёв (см. data class Layer ниже). */
-    val layers: List<Layer> = listOf(
+    initialLayers: List<Layer> = listOf(
         Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
         Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
         Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
@@ -31,7 +32,7 @@ class SlidingWindowAngleEncoder(
         Layer(arcLengthDegrees = 2.8125,  detectorCount = 128,  overlapFraction = 0.4),
     ),
     /** Размер результирующего кода в битах. */
-    val codeSizeInBits: Int = 256
+    initialCodeSizeInBits: Int = 256
 ) {
     /**
      * Параметры одного слоя детекторов.
@@ -41,13 +42,21 @@ class SlidingWindowAngleEncoder(
      */
     data class Layer(val arcLengthDegrees: Double, val detectorCount: Int, val overlapFraction: Double)
 
-    val codes = mutableSetOf<Pair<Double, IntArray>>()
-
     /** Полный круг в радианах (2π). */
     val twoPi: Double = 2.0 * PI
 
     /** Постоянный множитель перевода градусов в радианы (используется ниже много раз). */
     private val degreesToRadians: Double = PI / 180.0
+
+    /** Текущая конфигурация слоёв (копия исходных значений из конструктора). */
+    @Volatile
+    var layers: List<Layer> = initialLayers.toList()
+        private set
+
+    /** Текущий размер кодового слова. */
+    @Volatile
+    var codeSizeInBits: Int = initialCodeSizeInBits
+        private set
 
     /**
      * Последний сгенерированный код (обновляется при каждом encode).
@@ -55,6 +64,11 @@ class SlidingWindowAngleEncoder(
      */
     var lastEncodedCode: IntArray = IntArray(0)
         private set
+
+    init {
+        validateLayers(layers)
+        validateCodeSize(codeSizeInBits, layers)
+    }
 
     /**
      * Кодирует угол (в радианах) в разряжённый битовый вектор фиксированной длины [codeSizeInBits].
@@ -113,8 +127,69 @@ class SlidingWindowAngleEncoder(
         }
 
         lastEncodedCode = encodedBits
-        codes.add(angleInRadians to encodedBits)
         return encodedBits
+    }
+
+    /**
+     * Переопределяет конфигурацию слоёв согласно канону DAML (разд. 4.4.1) и при необходимости
+     * обновляет размер кодового слова. Используется UI, чтобы интерактивно менять покрытие.
+     */
+    fun reconfigure(newLayers: List<Layer>, requestedCodeSizeInBits: Int? = null) {
+        validateLayers(newLayers)
+        val sanitizedLayers = newLayers.toList()
+        val effectiveCodeSize = requestedCodeSizeInBits ?: sanitizedLayers.sumOf { it.detectorCount }
+        validateCodeSize(effectiveCodeSize, sanitizedLayers)
+
+        layers = sanitizedLayers
+        codeSizeInBits = effectiveCodeSize
+        lastEncodedCode = IntArray(0)
+    }
+
+    /**
+     * Генерирует канонический набор кодов для всей окружности с заданным шагом по градусам.
+     * Используется для расчёта статистик и профилей корреляции согласно DAML.
+     */
+    fun sampleFullCircle(stepDegrees: Double = 1.0): List<Pair<Double, IntArray>> {
+        require(stepDegrees > 0.0) {
+            "Шаг дискретизации должен быть положительным"
+        }
+        val steps = (360.0 / stepDegrees).toInt()
+        require(kotlin.math.abs(steps * stepDegrees - 360.0) < 1e-6) {
+            "Шаг дискретизации должен делить полный круг без остатка"
+        }
+
+        return (0 until steps).map { index ->
+            val angleDegrees = index * stepDegrees
+            val angleRadians = angleDegrees * PI / 180.0
+            angleRadians to encode(angleRadians).copyOf()
+        }
+    }
+}
+
+private fun validateLayers(layers: List<SlidingWindowAngleEncoder.Layer>) {
+    require(layers.isNotEmpty()) {
+        "Должен существовать хотя бы один слой детекторов"
+    }
+    layers.forEachIndexed { index, layer ->
+        require(layer.arcLengthDegrees > 0.0) {
+            "Длина дуги слоя ${index + 1} должна быть положительной"
+        }
+        require(layer.detectorCount > 0) {
+            "Количество детекторов слоя ${index + 1} должно быть положительным"
+        }
+        require(layer.overlapFraction >= 0.0) {
+            "Перекрытие слоя ${index + 1} не может быть отрицательным"
+        }
+    }
+}
+
+private fun validateCodeSize(codeSizeInBits: Int, layers: List<SlidingWindowAngleEncoder.Layer>) {
+    require(codeSizeInBits > 0) {
+        "Размер кодового слова должен быть положительным"
+    }
+    val detectorBudget = layers.sumOf { it.detectorCount }
+    require(codeSizeInBits >= detectorBudget) {
+        "Размер кодового слова ($codeSizeInBits) меньше числа детекторов ($detectorBudget)"
     }
 }
 
