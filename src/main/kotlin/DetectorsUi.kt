@@ -10,6 +10,7 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private const val EPS_DEG = 1e-7
@@ -21,9 +22,12 @@ private const val EPS_DEG = 1e-7
  */
 fun Application.detectorsUiModule(
     encoder: SlidingWindowAngleEncoder,
-    backgroundAnalyzer: BackgroundCorrelationAnalyzer
+    backgroundAnalyzer: BackgroundCorrelationAnalyzer,
+    initialCanonicalSamples: List<Pair<Double, IntArray>>,
+    initialLayout: DampLayoutVisualization
 ) {
-    val canonicalCodesRef = AtomicReference(encoder.sampleFullCircle(stepDegrees = 1.0))
+    val canonicalCodesRef = AtomicReference(initialCanonicalSamples)
+    val layoutRef = AtomicReference(initialLayout)
 
     routing {
         get("/") {
@@ -32,9 +36,11 @@ fun Application.detectorsUiModule(
             val angleRadians = angleDeg * PI / 180.0
             val encoded = encoder.encode(angleRadians)
             val activeDetectors = collectActiveDetectors(encoded, encoder.layers)
-            val analysis = backgroundAnalyzer.analyzeWithAngles(canonicalCodesRef.get(), angleDeg)
+            val canonicalSamples = canonicalCodesRef.get()
+            val analysis = backgroundAnalyzer.analyzeWithAngles(canonicalSamples, angleDeg)
             val stats = analysis.stats
             val profile = analysis.correlationProfile
+            val layoutVisualization = layoutRef.get()
 
             val detectorsSvg = buildDetectorsSvg(
                 layers = encoder.layers,
@@ -43,6 +49,7 @@ fun Application.detectorsUiModule(
                 markAngleDegrees = angleDeg
             )
             val correlationSvg = profile?.let { buildCorrelationSvg(it) }
+            val layoutSvg = buildLayoutSvg(layoutVisualization)
             val encodedBitsBlock = formatCodeBlocks(encoded)
             val activeBitCount = encoded.count { it != 0 }
 
@@ -269,6 +276,15 @@ fun Application.detectorsUiModule(
                             }
                         }
                         div(classes = "card") {
+                            h2 { +"Каноническая 2D-раскладка кодов" }
+                            div(classes = "svg-wrapper") {
+                                unsafe { raw(layoutSvg) }
+                            }
+                            p(classes = "note") {
+                                +"Цвет точек кодов соответствует углу из выборки по HSV (см. разд. 5.5 DAML)."
+                            }
+                        }
+                        div(classes = "card") {
                             h2 { +"Профиль фоновой корреляции" }
                             if (correlationSvg != null) {
                                 div(classes = "svg-wrapper") {
@@ -370,7 +386,9 @@ fun Application.detectorsUiModule(
                 }
 
                 encoder.reconfigure(layers, requestedCodeSize)
-                canonicalCodesRef.set(encoder.sampleFullCircle(stepDegrees = 1.0))
+                val newSamples = encoder.sampleFullCircle(stepDegrees = 1.0)
+                canonicalCodesRef.set(newSamples)
+                layoutRef.set(buildDampLayoutVisualization(newSamples))
 
                 call.respondRedirect(buildConfigRedirectUrl(angleParam, "ok", "Конфигурация слоёв обновлена."))
             } catch (ex: IllegalArgumentException) {
@@ -625,6 +643,100 @@ private fun buildCorrelationSvg(profile: BackgroundCorrelationAnalyzer.Correlati
 
     builder.appendLine("</svg>")
     return builder.toString()
+}
+
+private fun buildLayoutSvg(layout: DampLayoutVisualization): String {
+    if (layout.width <= 0 || layout.height <= 0) {
+        return """<svg viewBox="0 0 120 80" width="120" height="80" xmlns="http://www.w3.org/2000/svg"><text x="60" y="45" fill="#6b7280" font-size="12" text-anchor="middle">Нет данных</text></svg>"""
+    }
+
+    val cellSize = 18.0
+    val padding = 32.0
+    val svgWidth = padding * 2 + layout.width * cellSize
+    val svgHeight = padding * 2 + layout.height * cellSize
+    val pointRadius = cellSize * 0.32
+    val occupancy = layout.points.associateBy { it.x to it.y }
+
+    val builder = StringBuilder()
+    builder.appendLine("""<svg viewBox="0 0 ${fmt(svgWidth)} ${fmt(svgHeight)}" width="${fmt(svgWidth)}" height="${fmt(svgHeight)}" xmlns="http://www.w3.org/2000/svg">""")
+    builder.appendLine("""<rect x="0" y="0" width="${fmt(svgWidth)}" height="${fmt(svgHeight)}" fill="#ffffff" rx="18"/>""")
+    builder.appendLine("""<g stroke="#e5e7eb" stroke-width="0.6">""")
+    for (y in 0 until layout.height) {
+        for (x in 0 until layout.width) {
+            val top = padding + y * cellSize
+            val left = padding + x * cellSize
+            val occupied = occupancy.containsKey(x to y)
+            val fill = if (occupied) "#f1f5f9" else "#ffffff"
+            builder.appendLine(
+                """<rect x="${fmt(left)}" y="${fmt(top)}" width="${fmt(cellSize)}" height="${fmt(cellSize)}" fill="$fill"/>"""
+            )
+        }
+    }
+    builder.appendLine("</g>")
+    builder.appendLine("""<g stroke="#111827" stroke-width="0.4">""")
+
+    layout.points.forEach { point ->
+        val cx = padding + (point.x + 0.5) * cellSize
+        val cy = padding + (point.y + 0.5) * cellSize
+        val color = hsvToHex(point.angleDegrees)
+
+        val angleRad = point.angleDegrees * PI / 180.0
+        val dirX = kotlin.math.cos(angleRad)
+        val dirY = -kotlin.math.sin(angleRad)
+        val arrowLength = cellSize * 0.6
+        val headLength = arrowLength * 0.25
+        val headWidth = headLength * 0.9
+
+        val startX = cx - dirX * (pointRadius * 0.2)
+        val startY = cy - dirY * (pointRadius * 0.2)
+        val endX = cx + dirX * arrowLength
+        val endY = cy + dirY * arrowLength
+
+        val baseX = endX - dirX * headLength
+        val baseY = endY - dirY * headLength
+        val normalX = -dirY
+        val normalY = dirX
+        val leftX = baseX + normalX * (headWidth / 2)
+        val leftY = baseY + normalY * (headWidth / 2)
+        val rightX = baseX - normalX * (headWidth / 2)
+        val rightY = baseY - normalY * (headWidth / 2)
+
+        builder.appendLine(
+            """<circle cx="${fmt(cx)}" cy="${fmt(cy)}" r="${fmt(pointRadius)}" fill="$color"/>"""
+        )
+        builder.appendLine(
+            """<line x1="${fmt(startX)}" y1="${fmt(startY)}" x2="${fmt(baseX)}" y2="${fmt(baseY)}" stroke="$color" stroke-width="1.2" stroke-linecap="round"/>"""
+        )
+        builder.appendLine(
+            """<polygon points="${fmt(endX)},${fmt(endY)} ${fmt(leftX)},${fmt(leftY)} ${fmt(rightX)},${fmt(rightY)}" fill="$color"/>"""
+        )
+    }
+
+    builder.appendLine("</g>")
+    builder.appendLine("</svg>")
+    return builder.toString()
+}
+
+private fun hsvToHex(angleDegrees: Double, saturation: Double = 1.0, value: Double = 1.0): String {
+    val h = ((angleDegrees % 360.0) + 360.0) % 360.0
+    val c = value * saturation
+    val x = c * (1 - kotlin.math.abs((h / 60.0) % 2 - 1))
+    val m = value - c
+
+    val (r1, g1, b1) = when {
+        h < 60.0 -> Triple(c, x, 0.0)
+        h < 120.0 -> Triple(x, c, 0.0)
+        h < 180.0 -> Triple(0.0, c, x)
+        h < 240.0 -> Triple(0.0, x, c)
+        h < 300.0 -> Triple(x, 0.0, c)
+        else -> Triple(c, 0.0, x)
+    }
+
+    val r = ((r1 + m) * 255.0).roundToInt().coerceIn(0, 255)
+    val g = ((g1 + m) * 255.0).roundToInt().coerceIn(0, 255)
+    val b = ((b1 + m) * 255.0).roundToInt().coerceIn(0, 255)
+
+    return String.format("#%02X%02X%02X", r, g, b)
 }
 
 private fun formatCodeBlocks(code: IntArray, groupSize: Int = 4, rowSize: Int = 64): String {

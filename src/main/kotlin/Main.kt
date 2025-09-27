@@ -14,12 +14,16 @@ fun main() {
         initialCodeSizeInBits = 256
     )
 
+    val canonicalSamples = encoder.sampleFullCircle(stepDegrees = 1.0)
+    val layoutVisualization = buildDampLayoutVisualization(canonicalSamples)
     val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
 
     embeddedServer(Netty, port = 8080) {
         detectorsUiModule(
             encoder = encoder,
-            backgroundAnalyzer = backgroundCorrelationAnalyzer
+            backgroundAnalyzer = backgroundCorrelationAnalyzer,
+            initialCanonicalSamples = canonicalSamples,
+            initialLayout = layoutVisualization
         )
     }.start(wait = true)
 }
