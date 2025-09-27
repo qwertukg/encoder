@@ -1,26 +1,25 @@
-import SlidingWindowAngleEncoder.Layer
-import kotlin.math.PI
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
 
 fun main() {
-    val encoder = SlidingWindowAngleEncoder(listOf(
-        Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 2.8125,  detectorCount = 128,  overlapFraction = 0.4),
-    ), 256)
-
-    (0..359).forEach {
-        val angleRadians = it * PI / 180.0
-        val code = encoder.encode(angleRadians)
-        println(code.joinToString("", "[", "]") + ":$it")
-//        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
-    }
+    val encoder = SlidingWindowAngleEncoder(
+        initialLayers = listOf(
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
+            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 2.8125, detectorCount = 128, overlapFraction = 0.4),
+        ),
+        initialCodeSizeInBits = 256
+    )
 
     val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
-    val results = backgroundCorrelationAnalyzer.analyzeWithAngles(encoder.codes, 180.0)
 
-    println("Done")
-
+    embeddedServer(Netty, port = 8080) {
+        detectorsUiModule(
+            encoder = encoder,
+            backgroundAnalyzer = backgroundCorrelationAnalyzer
+        )
+    }.start(wait = true)
 }
