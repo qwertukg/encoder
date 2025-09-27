@@ -196,7 +196,11 @@ class DampLayout2D(
         var total = 0.0
         for (y in 0 until height) {
             for (x in 0 until width) {
-                val idx = grid[y][x] ?: continue
+                val idx = when {
+                    y == y1 && x == x1 -> firstIndex
+                    y == y2 && x == x2 -> secondIndex
+                    else -> grid[y][x]
+                } ?: continue
                 val s1 = similarityWithThreshold(firstIndex, idx, lambda)
                 val s2 = similarityWithThreshold(secondIndex, idx, lambda)
                 if (s1 == 0.0 && s2 == 0.0) continue
@@ -233,7 +237,11 @@ class DampLayout2D(
                 val dxCenter = x - cx
                 val centerDistanceSquared = dyCenterSquared + dxCenter * dxCenter
                 if (centerDistanceSquared > radiusSquared) continue
-                val idx = grid[y][x]
+                val idx = when {
+                    y == y1 && x == x1 -> firstIndex
+                    y == y2 && x == x2 -> secondIndex
+                    else -> grid[y][x]
+                } ?: continue
                 val s1 = similarityWithThreshold(firstIndex, idx, lambda)
                 val s2 = similarityWithThreshold(secondIndex, idx, lambda)
                 if (s1 == 0.0 && s2 == 0.0) continue
