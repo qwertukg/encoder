@@ -43,7 +43,7 @@ class DampLayout2D(
         val shortRangeBaseRadius: Double = 2.0,     // базовый радиус для ближнего этапа
     )
 
-    private val rnd: Random = random ?: Random.Default
+    private val rnd: Random = random ?: Random(0)
     private val vectorLength: Int
     private val norms: DoubleArray
 
@@ -100,49 +100,62 @@ class DampLayout2D(
 
     private fun performLongRangePhase() {
         var lambda = parameters.lambdaStart
-        var radius = max(parameters.minRadius, max(height, width) * parameters.initialRadiusFraction)
+        val initialRadius = max(parameters.minRadius, max(height, width) * parameters.initialRadiusFraction)
         val pairCount = max(1, parameters.pairCountPerStep ?: codes.size)
-        var baselineSwaps: Double? = null
 
-        for (step in 0 until parameters.maxLongRangeSteps) {
-            var swaps = 0
-            repeat(pairCount) {
-                val pair = pickPair(radius) ?: return@repeat
-                val (first, second) = pair
-                val firstIndex = grid[first.first][first.second]
-                val secondIndex = grid[second.first][second.second]
-                val currentEnergy = computeLongRangeEnergy(firstIndex, first.first, first.second, secondIndex, second.first, second.second, lambda)
-                val swappedEnergy = computeLongRangeEnergy(secondIndex, first.first, first.second, firstIndex, second.first, second.second, lambda)
-                if (swappedEnergy < currentEnergy) {
-                    swapCells(first, second)
-                    swaps++
+        while (lambda <= parameters.lambdaEnd + 1e-9) {
+            var currentRadius = initialRadius
+            var baselineSwaps: Double? = null
+            var step = 0
+            while (step < parameters.maxLongRangeSteps && currentRadius >= parameters.minRadius - 1e-9) {
+                var swaps = 0
+                repeat(pairCount) {
+                    val pair = pickPair(currentRadius) ?: return@repeat
+                    val (first, second) = pair
+                    val firstIndex = grid[first.first][first.second]
+                    val secondIndex = grid[second.first][second.second]
+                    val currentEnergy = computeLongRangeEnergy(
+                        firstIndex,
+                        first.first,
+                        first.second,
+                        secondIndex,
+                        second.first,
+                        second.second,
+                        lambda
+                    )
+                    val swappedEnergy = computeLongRangeEnergy(
+                        secondIndex,
+                        first.first,
+                        first.second,
+                        firstIndex,
+                        second.first,
+                        second.second,
+                        lambda
+                    )
+                    if (swappedEnergy < currentEnergy) {
+                        swapCells(first, second)
+                        swaps++
+                    }
+                }
+                if (baselineSwaps == null) {
+                    baselineSwaps = swaps.toDouble().coerceAtLeast(1.0)
+                }
+                if (swaps == 0) {
+                    currentRadius = max(currentRadius * parameters.radiusDecayFactor, parameters.minRadius)
+                    step++
+                    continue
+                }
+                val target = baselineSwaps!! * parameters.swapRatioThreshold
+                if (swaps <= target) {
+                    currentRadius = max(currentRadius * parameters.radiusDecayFactor, parameters.minRadius)
+                }
+                step++
+                if (currentRadius <= parameters.minRadius + 1e-9 && swaps <= target) {
+                    break
                 }
             }
-            if (baselineSwaps == null) {
-                baselineSwaps = swaps.toDouble().coerceAtLeast(1.0)
-            }
-            if (swaps == 0) {
-                val lambdaChanged = if (lambda < parameters.lambdaEnd) {
-                    lambda = min(lambda + parameters.lambdaStep, parameters.lambdaEnd)
-                    true
-                } else false
-                val radiusChanged = if (radius > parameters.minRadius) {
-                    radius = max(radius * parameters.radiusDecayFactor, parameters.minRadius)
-                    true
-                } else false
-                if (!lambdaChanged && !radiusChanged) break
-                continue
-            }
-            val target = baselineSwaps!! * parameters.swapRatioThreshold
-            if (swaps <= target) {
-                if (lambda < parameters.lambdaEnd) {
-                    lambda = min(lambda + parameters.lambdaStep, parameters.lambdaEnd)
-                }
-                if (radius > parameters.minRadius) {
-                    radius = max(radius * parameters.radiusDecayFactor, parameters.minRadius)
-                }
-            }
-            if (lambda >= parameters.lambdaEnd && radius <= parameters.minRadius) break
+            lambda = min(lambda + parameters.lambdaStep, parameters.lambdaEnd + 1e-9)
+            if (lambda > parameters.lambdaEnd) break
         }
     }
 
@@ -158,7 +171,7 @@ class DampLayout2D(
                 val (first, second) = pair
                 val firstIndex = grid[first.first][first.second]
                 val secondIndex = grid[second.first][second.second]
-                val distance = sqrt(distanceSquared(first.first, first.second, second.first, second.second))
+                val distance = euclideanDistance(first.first, first.second, second.first, second.second)
                 val radius = max(baseRadius, distance)
                 val currentEnergy = computeShortRangeEnergy(firstIndex, first.first, first.second, secondIndex, second.first, second.second, lambda, radius)
                 val swappedEnergy = computeShortRangeEnergy(secondIndex, first.first, first.second, firstIndex, second.first, second.second, lambda, radius)
@@ -187,8 +200,8 @@ class DampLayout2D(
                 val s1 = similarityWithThreshold(firstIndex, idx, lambda)
                 val s2 = similarityWithThreshold(secondIndex, idx, lambda)
                 if (s1 == 0.0 && s2 == 0.0) continue
-                val d1 = distanceSquared(y1, x1, y, x)
-                val d2 = distanceSquared(y2, x2, y, x)
+                val d1 = euclideanDistance(y1, x1, y, x)
+                val d2 = euclideanDistance(y2, x2, y, x)
                 total += s1 * d1 + s2 * d2
             }
         }
@@ -224,8 +237,8 @@ class DampLayout2D(
                 val s1 = similarityWithThreshold(firstIndex, idx, lambda)
                 val s2 = similarityWithThreshold(secondIndex, idx, lambda)
                 if (s1 == 0.0 && s2 == 0.0) continue
-                val d1 = max(distanceSquared(y1, x1, y, x), 1e-9)
-                val d2 = max(distanceSquared(y2, x2, y, x), 1e-9)
+                val d1 = max(euclideanDistance(y1, x1, y, x), 1e-9)
+                val d2 = max(euclideanDistance(y2, x2, y, x), 1e-9)
                 total += s1 / d1 + s2 / d2
             }
         }
@@ -315,10 +328,10 @@ class DampLayout2D(
         }
     }
 
-    private fun distanceSquared(y1: Int, x1: Int, y2: Int, x2: Int): Double {
+    private fun euclideanDistance(y1: Int, x1: Int, y2: Int, x2: Int): Double {
         val dy = (y1 - y2).toDouble()
         val dx = (x1 - x2).toDouble()
-        return dy * dy + dx * dx
+        return sqrt(dy * dy + dx * dx)
     }
 
     private fun buildResult(): List<List<IntArray?>> {
