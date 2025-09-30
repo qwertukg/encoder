@@ -25,16 +25,18 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
         if (angleCodes.isEmpty()) return emptyList()
         repeat(epochs.coerceAtLeast(0)) {
             for (firstIndex in grid.indices) {
-                val firstCodeIndex = grid[firstIndex] ?: continue
+                var currentFirstCodeIndex = grid[firstIndex] ?: continue
                 val secondCandidates = candidateIndices(firstIndex, farRadius)
                 for (secondIndex in secondCandidates) {
                     val secondCodeIndex = grid[secondIndex] ?: continue
-                    if (firstCodeIndex == secondCodeIndex) continue
+                    if (currentFirstCodeIndex == secondCodeIndex) continue
                     val currentEnergy = pairEnergy(firstIndex, secondIndex)
                     val swappedEnergy = swappedPairEnergy(firstIndex, secondIndex)
                     if (swappedEnergy < currentEnergy) {
+                        val previousFirstCodeIndex = currentFirstCodeIndex
                         grid[firstIndex] = secondCodeIndex
-                        grid[secondIndex] = firstCodeIndex
+                        currentFirstCodeIndex = secondCodeIndex
+                        grid[secondIndex] = previousFirstCodeIndex
                     }
                 }
             }
