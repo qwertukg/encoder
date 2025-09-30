@@ -1,3 +1,8 @@
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.pow
@@ -21,43 +26,54 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
      * @param epochs Количество эпох перебора пар.
      * @return Тройка значений: исходный угол и координаты [y, x] для каждого кода в исходном списке.
      */
-    fun layout(farRadius: Int, epochs: Int): List<Triple<Double, Int, Int>> {
-        logGridState(-1)
-
+    suspend fun layout(farRadius: Int, epochs: Int): List<Triple<Double, Int, Int>> {
         if (angleCodes.isEmpty()) return emptyList()
-        repeat(epochs.coerceAtLeast(0)) { epoch ->
 
-            for (firstIndex in grid.indices) {
-                var currentFirstCodeIndex = grid[firstIndex] ?: continue
-                val secondCandidates = candidateIndices(firstIndex, farRadius)
-                for (secondIndex in secondCandidates) {
-                    val secondCodeIndex = grid[secondIndex] ?: continue
-                    if (currentFirstCodeIndex == secondCodeIndex) continue
-                    val currentEnergy = pairEnergy(firstIndex, secondIndex)
-                    val swappedEnergy = swappedPairEnergy(firstIndex, secondIndex)
-                    if (swappedEnergy < currentEnergy) {
-                        val previousFirstCodeIndex = currentFirstCodeIndex
-                        grid[firstIndex] = secondCodeIndex
-                        currentFirstCodeIndex = secondCodeIndex
-                        grid[secondIndex] = previousFirstCodeIndex
+        return coroutineScope {
+            logGridState(-1)
+
+            repeat(epochs.coerceAtLeast(0)) { epoch ->
+                for (firstIndex in grid.indices) {
+                    var currentFirstCodeIndex = grid[firstIndex] ?: continue
+                    val secondCandidates = candidateIndices(firstIndex, farRadius)
+                    for (secondIndex in secondCandidates) {
+                        val secondCodeIndex = grid[secondIndex] ?: continue
+                        if (currentFirstCodeIndex == secondCodeIndex) continue
+
+                        val (currentEnergy, swappedEnergy) = computeSwapEnergies(firstIndex, secondIndex)
+                        if (swappedEnergy < currentEnergy) {
+                            val previousFirstCodeIndex = currentFirstCodeIndex
+                            grid[firstIndex] = secondCodeIndex
+                            currentFirstCodeIndex = secondCodeIndex
+                            grid[secondIndex] = previousFirstCodeIndex
+                        }
                     }
                 }
+                logGridState(epoch)
             }
-            logGridState(epoch)
+
+            buildCoordinateMap()
         }
-        return buildCoordinateMap()
     }
 
-    private fun logGridState(epoch: Int) {
-        val builder = StringBuilder()
-        for (y in 0 until gridSize) {
-            val row = (0 until gridSize).joinToString(separator = "\t") { x ->
-                val codeIndex = grid[y * gridSize + x]
-                codeIndex?.let { angleCodes[it].first.toString() } ?: "·"
+    private suspend fun logGridState(epoch: Int) {
+        withContext(Dispatchers.Default) {
+            val builder = StringBuilder()
+            for (y in 0 until gridSize) {
+                val row = (0 until gridSize).joinToString(separator = "\t") { x ->
+                    val codeIndex = grid[y * gridSize + x]
+                    codeIndex?.let { angleCodes[it].first.toString() } ?: "·"
+                }
+                builder.appendLine(row)
             }
-            builder.appendLine(row)
+            println("Эпоха ${epoch + 1}:\n${builder.toString().trimEnd()}\n")
         }
-        println("Эпоха ${epoch + 1}:\n${builder.toString().trimEnd()}\n")
+    }
+
+    private suspend fun CoroutineScope.computeSwapEnergies(firstIndex: Int, secondIndex: Int): Pair<Double, Double> {
+        val current = async(Dispatchers.Default) { pairEnergy(firstIndex, secondIndex) }
+        val swapped = async(Dispatchers.Default) { swappedPairEnergy(firstIndex, secondIndex) }
+        return current.await() to swapped.await()
     }
 
     private fun candidateIndices(sourceIndex: Int, farRadius: Int): Sequence<Int> {
@@ -132,7 +148,7 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
 
     private fun toCoord(index: Int): Pair<Int, Int> = index / gridSize to index % gridSize
 
-    private fun buildCoordinateMap(): List<Triple<Double, Int, Int>> {
+    private suspend fun buildCoordinateMap(): List<Triple<Double, Int, Int>> = withContext(Dispatchers.Default) {
         val result = MutableList(angleCodes.size) { Triple(0.0, 0, 0) }
         grid.forEachIndexed { index, codeIndex ->
             val actualIndex = codeIndex ?: return@forEachIndexed
@@ -140,6 +156,6 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
             val coord = toCoord(index)
             result[actualIndex] = Triple(angle, coord.first, coord.second)
         }
-        return result
+        result
     }
 }

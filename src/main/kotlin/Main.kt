@@ -1,5 +1,6 @@
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import kotlinx.coroutines.runBlocking
 import kotlin.math.PI
 
 fun main() {
@@ -25,7 +26,9 @@ fun main() {
     }
 
     val layout = DamlLongRangeLayout2D(codes)
-    val matrix = layout.layout(64, 150)
+    val matrix = runBlocking {
+        layout.layout(64, 150)
+    }
 
 
     println("Done!")
