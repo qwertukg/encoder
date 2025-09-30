@@ -22,9 +22,10 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
      * @return Тройка значений: исходный угол и координаты [y, x] для каждого кода в исходном списке.
      */
     fun layout(farRadius: Int, epochs: Int): List<Triple<Double, Int, Int>> {
+        logGridState(-1)
+
         if (angleCodes.isEmpty()) return emptyList()
         repeat(epochs.coerceAtLeast(0)) { epoch ->
-            logGridState(epoch)
 
             for (firstIndex in grid.indices) {
                 var currentFirstCodeIndex = grid[firstIndex] ?: continue
@@ -42,7 +43,7 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
                     }
                 }
             }
-//            logGridState(epoch)
+            logGridState(epoch)
         }
         return buildCoordinateMap()
     }

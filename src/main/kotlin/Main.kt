@@ -25,8 +25,10 @@ fun main() {
     }
 
     val layout = DamlLongRangeLayout2D(codes)
-    val matrix = layout.layout(64, 10)
-    val m = matrix
+    val matrix = layout.layout(64, 150)
+
+
+    println("Done!")
 
 
 
