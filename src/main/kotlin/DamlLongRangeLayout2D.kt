@@ -2,6 +2,7 @@ import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.sqrt
+import kotlin.time.measureTime
 
 /**
  * Минимальная реализация дальнего (long-range) алгоритма раскладки из DAML.pdf.
@@ -26,23 +27,25 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
 
         if (angleCodes.isEmpty()) return emptyList()
         repeat(epochs.coerceAtLeast(0)) { epoch ->
-
-            for (firstIndex in grid.indices) {
-                var currentFirstCodeIndex = grid[firstIndex] ?: continue
-                val secondCandidates = candidateIndices(firstIndex, farRadius)
-                for (secondIndex in secondCandidates) {
-                    val secondCodeIndex = grid[secondIndex] ?: continue
-                    if (currentFirstCodeIndex == secondCodeIndex) continue
-                    val currentEnergy = pairEnergy(firstIndex, secondIndex)
-                    val swappedEnergy = swappedPairEnergy(firstIndex, secondIndex)
-                    if (swappedEnergy < currentEnergy) {
-                        val previousFirstCodeIndex = currentFirstCodeIndex
-                        grid[firstIndex] = secondCodeIndex
-                        currentFirstCodeIndex = secondCodeIndex
-                        grid[secondIndex] = previousFirstCodeIndex
+            val dt = measureTime {
+                for (firstIndex in grid.indices) {
+                    var currentFirstCodeIndex = grid[firstIndex] ?: continue
+                    val secondCandidates = candidateIndices(firstIndex, farRadius)
+                    for (secondIndex in secondCandidates) {
+                        val secondCodeIndex = grid[secondIndex] ?: continue
+                        if (currentFirstCodeIndex == secondCodeIndex) continue
+                        val currentEnergy = pairEnergy(firstIndex, secondIndex)
+                        val swappedEnergy = swappedPairEnergy(firstIndex, secondIndex)
+                        if (swappedEnergy < currentEnergy) {
+                            val previousFirstCodeIndex = currentFirstCodeIndex
+                            grid[firstIndex] = secondCodeIndex
+                            currentFirstCodeIndex = secondCodeIndex
+                            grid[secondIndex] = previousFirstCodeIndex
+                        }
                     }
                 }
             }
+            println("duration = $dt")
             logGridState(epoch)
         }
         return buildCoordinateMap()
@@ -51,9 +54,9 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
     private fun logGridState(epoch: Int) {
         val builder = StringBuilder()
         for (y in 0 until gridSize) {
-            val row = (0 until gridSize).joinToString(separator = "\t") { x ->
+            val row = (0 until gridSize).joinToString(separator = ",") { x ->
                 val codeIndex = grid[y * gridSize + x]
-                codeIndex?.let { angleCodes[it].first.toString() } ?: "·"
+                codeIndex?.let { angleCodes[it].first.toString() } ?: ""
             }
             builder.appendLine(row)
         }

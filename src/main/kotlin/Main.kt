@@ -16,7 +16,7 @@ fun main() {
     )
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
-    (0..359).forEach {
+    (0..150).forEach {
         val angleRadians = it * PI / 180.0
         val code = encoder.encode(angleRadians)
         codes.add(it.toDouble() to code)
