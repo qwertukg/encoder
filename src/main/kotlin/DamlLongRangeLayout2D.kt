@@ -14,6 +14,7 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
     private val grid: MutableList<Int?> = MutableList(gridSize * gridSize) { index ->
         if (index < angleCodes.size) index else null
     }
+    private val energyCache: DoubleArray = DoubleArray(grid.size)
 
     /**
      * Выполняет раскладку на решётке.
@@ -25,6 +26,7 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
         logGridState(-1)
 
         if (angleCodes.isEmpty()) return emptyList()
+        initializeEnergyCache()
         repeat(epochs.coerceAtLeast(0)) { epoch ->
 
             for (firstIndex in grid.indices) {
@@ -33,13 +35,52 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
                 for (secondIndex in secondCandidates) {
                     val secondCodeIndex = grid[secondIndex] ?: continue
                     if (currentFirstCodeIndex == secondCodeIndex) continue
-                    val currentEnergy = pairEnergy(firstIndex, secondIndex)
-                    val swappedEnergy = swappedPairEnergy(firstIndex, secondIndex)
+                    val firstCodeIndexBefore = currentFirstCodeIndex
+                    val secondCodeIndexBefore = secondCodeIndex
+                    val currentEnergy = energyCache[firstIndex] + energyCache[secondIndex]
+                    val swappedEnergy =
+                        computeEnergyForIndexWithSwap(
+                            firstIndex,
+                            secondCodeIndexBefore,
+                            firstIndex,
+                            firstCodeIndexBefore,
+                            secondIndex,
+                            secondCodeIndexBefore
+                        ) +
+                            computeEnergyForIndexWithSwap(
+                                secondIndex,
+                                firstCodeIndexBefore,
+                                firstIndex,
+                                firstCodeIndexBefore,
+                                secondIndex,
+                                secondCodeIndexBefore
+                            )
                     if (swappedEnergy < currentEnergy) {
-                        val previousFirstCodeIndex = currentFirstCodeIndex
-                        grid[firstIndex] = secondCodeIndex
-                        currentFirstCodeIndex = secondCodeIndex
-                        grid[secondIndex] = previousFirstCodeIndex
+                        val firstCoord = toCoord(firstIndex)
+                        val secondCoord = toCoord(secondIndex)
+                        grid[firstIndex] = secondCodeIndexBefore
+                        currentFirstCodeIndex = secondCodeIndexBefore
+                        grid[secondIndex] = firstCodeIndexBefore
+                        energyCache[firstIndex] = computeEnergyForIndex(firstIndex)
+                        energyCache[secondIndex] = computeEnergyForIndex(secondIndex)
+                        grid.forEachIndexed { index, codeIndex ->
+                            if (index == firstIndex || index == secondIndex) return@forEachIndexed
+                            val otherCodeIndex = codeIndex ?: return@forEachIndexed
+                            val otherCoord = toCoord(index)
+                            val distanceToFirst = distance(otherCoord, firstCoord)
+                            val distanceToSecond = distance(otherCoord, secondCoord)
+                            val previousContributionWithFirst =
+                                similarity(otherCodeIndex, firstCodeIndexBefore) * distanceToFirst
+                            val previousContributionWithSecond =
+                                similarity(otherCodeIndex, secondCodeIndexBefore) * distanceToSecond
+                            val newContributionWithFirst =
+                                similarity(otherCodeIndex, secondCodeIndexBefore) * distanceToFirst
+                            val newContributionWithSecond =
+                                similarity(otherCodeIndex, firstCodeIndexBefore) * distanceToSecond
+                            energyCache[index] +=
+                                (newContributionWithFirst + newContributionWithSecond) -
+                                    (previousContributionWithFirst + previousContributionWithSecond)
+                        }
                     }
                 }
             }
@@ -74,32 +115,52 @@ class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>
         }
     }
 
-    private fun pairEnergy(firstIndex: Int, secondIndex: Int): Double {
-        val firstCodeIndex = grid[firstIndex] ?: return 0.0
-        val secondCodeIndex = grid[secondIndex] ?: return 0.0
-        val firstCoord = toCoord(firstIndex)
-        val secondCoord = toCoord(secondIndex)
+    private fun initializeEnergyCache() {
+        grid.forEachIndexed { index, codeIndex ->
+            energyCache[index] = if (codeIndex != null) computeEnergyForIndex(index) else 0.0
+        }
+    }
+
+    private fun computeEnergyForIndex(index: Int): Double {
+        val codeIndex = grid[index] ?: return 0.0
+        val coord = toCoord(index)
         var energy = 0.0
         grid.forEachIndexed { otherIndex, otherCodeIndex ->
-            val codeIndex = otherCodeIndex ?: return@forEachIndexed
+            val otherCode = otherCodeIndex ?: return@forEachIndexed
+            if (otherIndex == index) return@forEachIndexed
             val otherCoord = toCoord(otherIndex)
-            energy += similarity(firstCodeIndex, codeIndex) * distance(firstCoord, otherCoord)
-            energy += similarity(secondCodeIndex, codeIndex) * distance(secondCoord, otherCoord)
+            energy += similarity(codeIndex, otherCode) * distance(coord, otherCoord)
         }
         return energy
     }
 
-    private fun swappedPairEnergy(firstIndex: Int, secondIndex: Int): Double {
-        val firstCodeIndex = grid[firstIndex] ?: return 0.0
-        val secondCodeIndex = grid[secondIndex] ?: return 0.0
-        val firstCoord = toCoord(firstIndex)
-        val secondCoord = toCoord(secondIndex)
+    private fun computeEnergyForIndexWithSwap(
+        targetIndex: Int,
+        targetCodeIndex: Int,
+        firstIndex: Int,
+        firstCodeIndex: Int,
+        secondIndex: Int,
+        secondCodeIndex: Int
+    ): Double {
+        val targetCoord = toCoord(targetIndex)
         var energy = 0.0
-        grid.forEachIndexed { otherIndex, otherCodeIndex ->
-            val codeIndex = otherCodeIndex ?: return@forEachIndexed
+        grid.forEachIndexed { otherIndex, rawCodeIndex ->
+            if (otherIndex == targetIndex) return@forEachIndexed
+            val otherCodeIndex = when (otherIndex) {
+                firstIndex -> if (targetIndex == firstIndex) {
+                    return@forEachIndexed
+                } else {
+                    secondCodeIndex
+                }
+                secondIndex -> if (targetIndex == secondIndex) {
+                    return@forEachIndexed
+                } else {
+                    firstCodeIndex
+                }
+                else -> rawCodeIndex ?: return@forEachIndexed
+            }
             val otherCoord = toCoord(otherIndex)
-            energy += similarity(secondCodeIndex, codeIndex) * distance(firstCoord, otherCoord)
-            energy += similarity(firstCodeIndex, codeIndex) * distance(secondCoord, otherCoord)
+            energy += similarity(targetCodeIndex, otherCodeIndex) * distance(targetCoord, otherCoord)
         }
         return energy
     }
