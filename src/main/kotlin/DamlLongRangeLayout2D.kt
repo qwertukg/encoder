@@ -5,25 +5,25 @@ import kotlin.math.sqrt
 
 /**
  * Минимальная реализация дальнего (long-range) алгоритма раскладки из DAML.pdf.
- * Класс принимает список кодов и позволяет выполнять раскладку на двумерной решётке
+ * Класс принимает список пар «угол-код» и позволяет выполнять раскладку на двумерной решётке
  * только посредством обмена точек, если это уменьшает энергию пары.
  */
-class DamlLongRangeLayout2D(private val codes: List<IntArray>) {
+class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>) {
 
-    private val gridSize: Int = ceil(sqrt(codes.size.toDouble())).toInt()
+    private val gridSize: Int = ceil(sqrt(angleCodes.size.toDouble())).toInt()
     private val grid: MutableList<Int?> = MutableList(gridSize * gridSize) { index ->
-        if (index < codes.size) index else null
+        if (index < angleCodes.size) index else null
     }
 
     /**
      * Выполняет раскладку на решётке.
      * @param farRadius Радиус для выбора кандидатов на обмен.
      * @param epochs Количество эпох перебора пар.
-     * @return Координаты [y, x] для каждого кода в исходном списке.
+     * @return Тройка значений: исходный угол и координаты [y, x] для каждого кода в исходном списке.
      */
-    fun layout(farRadius: Int, epochs: Int): List<Pair<Int, Int>> {
-        if (codes.isEmpty()) return emptyList()
-        repeat(epochs.coerceAtLeast(0)) {
+    fun layout(farRadius: Int, epochs: Int): List<Triple<Double, Int, Int>> {
+        if (angleCodes.isEmpty()) return emptyList()
+        repeat(epochs.coerceAtLeast(0)) { epoch ->
             for (firstIndex in grid.indices) {
                 val firstCodeIndex = grid[firstIndex] ?: continue
                 val secondCandidates = candidateIndices(firstIndex, farRadius)
@@ -38,8 +38,21 @@ class DamlLongRangeLayout2D(private val codes: List<IntArray>) {
                     }
                 }
             }
+            logGridState(epoch)
         }
         return buildCoordinateMap()
+    }
+
+    private fun logGridState(epoch: Int) {
+        val builder = StringBuilder()
+        for (y in 0 until gridSize) {
+            val row = (0 until gridSize).joinToString(separator = "\t") { x ->
+                val codeIndex = grid[y * gridSize + x]
+                codeIndex?.let { angleCodes[it].first.toString() } ?: "·"
+            }
+            builder.appendLine(row)
+        }
+        println("Эпоха ${epoch + 1}:\n${builder.toString().trimEnd()}\n")
     }
 
     private fun candidateIndices(sourceIndex: Int, farRadius: Int): Sequence<Int> {
@@ -87,8 +100,8 @@ class DamlLongRangeLayout2D(private val codes: List<IntArray>) {
     }
 
     private fun similarity(firstCodeIndex: Int, secondCodeIndex: Int): Double {
-        val first = codes[firstCodeIndex]
-        val second = codes[secondCodeIndex]
+        val first = angleCodes[firstCodeIndex].second
+        val second = angleCodes[secondCodeIndex].second
         val length = minOf(first.size, second.size)
         if (length == 0) return 0.0
         var equalBits = 0
@@ -114,11 +127,13 @@ class DamlLongRangeLayout2D(private val codes: List<IntArray>) {
 
     private fun toCoord(index: Int): Pair<Int, Int> = index / gridSize to index % gridSize
 
-    private fun buildCoordinateMap(): List<Pair<Int, Int>> {
-        val result = MutableList(codes.size) { 0 to 0 }
+    private fun buildCoordinateMap(): List<Triple<Double, Int, Int>> {
+        val result = MutableList(angleCodes.size) { Triple(0.0, 0, 0) }
         grid.forEachIndexed { index, codeIndex ->
             val actualIndex = codeIndex ?: return@forEachIndexed
-            result[actualIndex] = toCoord(index)
+            val (angle, _) = angleCodes[actualIndex]
+            val coord = toCoord(index)
+            result[actualIndex] = Triple(angle, coord.first, coord.second)
         }
         return result
     }
