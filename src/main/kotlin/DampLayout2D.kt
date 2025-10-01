@@ -36,14 +36,14 @@ import kotlin.time.measureTime
  * 6) Опциональная short-range «полировка»: локальная минимизация энергии в малом радиусе,
  *    чтобы пригладить мелкие огрехи топологии, не ломая глобальную структуру.
  */
-class DamlLayout2D(
+class DampLayout2D(
     private val angleCodes: List<Pair<Double, IntArray>>,
     randomizeStart: Boolean = true,
     seed: Int = 42,
 ) {
     private val rng = Random(seed)
     private val n = angleCodes.size
-    private val gridSize: Int = ceil(kotlin.math.sqrt(n.toDouble())).toInt()
+    private val gridSize: Int = ceil(sqrt(n.toDouble())).toInt()
 
     // Решётка хранит индексы кодов или null (если ячейка пустая)
     private val grid: MutableList<Int?> = MutableList(gridSize * gridSize) { null }

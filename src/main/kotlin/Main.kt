@@ -1,5 +1,3 @@
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
 import kotlin.math.PI
 
 fun main() {
@@ -24,7 +22,7 @@ fun main() {
 //        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
     }
 
-    val layout = DamlLayout2D(
+    val layout = DampLayout2D(
         angleCodes = codes,
         randomizeStart = true,
         seed = 42
