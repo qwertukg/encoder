@@ -14,7 +14,7 @@ fun main() {
     )
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
-    (0..179).forEach {
+    (0..359).forEach {
         val angleRadians = it * PI / 180.0
         val code = encoder.encode(angleRadians)
         codes.add(it.toDouble() to code)
@@ -29,7 +29,7 @@ fun main() {
     )
 
     val posAfterLong = layout.layoutLongRange(
-        farRadius = 10,
+        farRadius = 20,
         epochs = 100,
         minSim = 0.00,
         lambdaStart = 0.10,
