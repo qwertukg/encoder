@@ -5,6 +5,7 @@ import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.random.Random
+import kotlin.random.nextInt
 import kotlin.time.Duration
 import kotlin.time.measureTime
 
@@ -301,6 +302,7 @@ class DampLayout2D(
 
     /** Кандидаты (индексы ячеек) в круге радиуса r от sourceIndex. */
     private fun candidateIndices(sourceIndex: Int, radius: Int): Sequence<Int> {
+        val r = Random.nextInt(1..radius)
         val r2 = radius.toDouble().pow(2.0)
         val (sy, sx) = toCoord(sourceIndex)
         return grid.indices.asSequence().filter { idx ->
