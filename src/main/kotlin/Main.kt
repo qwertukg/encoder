@@ -30,7 +30,7 @@ fun main() {
 
     val posAfterLong = layout.layoutLongRange(
         farRadius = 20,
-        epochs = 100,
+        epochs = 30,
         minSim = 0.00,
         lambdaStart = 0.10,
         lambdaEnd = 0.90,
@@ -40,7 +40,7 @@ fun main() {
     )
 
 
-    println("Done!")
+    println("Done! Total swaps: ${layout.swapsLog.joinToString(",")}")
 
 
 

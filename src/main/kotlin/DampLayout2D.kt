@@ -45,6 +45,7 @@ class DampLayout2D(
     private val rng = Random(seed)
     private val n = angleCodes.size
     private val gridSize: Int = ceil(sqrt(n.toDouble())).toInt()
+    val swapsLog = mutableListOf<Int>()
 
     // Решётка хранит индексы кодов или null (если ячейка пустая)
     private val grid: MutableList<Int?> = MutableList(gridSize * gridSize) { null }
@@ -90,7 +91,7 @@ class DampLayout2D(
             val csv = logGridState(epoch = -1, tag = "start")
             showLayout(csv)
         }
-
+        var swapCount = 0
         repeat(epochs.coerceAtLeast(0)) { e ->
             val lam = lerp(lambdaStart, lambdaEnd, if (epochs <= 1) 1.0 else e.toDouble() / (epochs - 1).coerceAtLeast(1))
             val dt: Duration = measureTime {
@@ -219,6 +220,8 @@ class DampLayout2D(
             grid[a] = ib
             grid[b] = ia
         }
+
+        swapsLog.add(swaps.size)
     }
 
     // ======================= ЭНЕРГИЯ/СХОДСТВО =======================
