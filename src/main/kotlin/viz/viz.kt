@@ -5,12 +5,16 @@ import javax.swing.*
 import java.io.File
 import kotlin.math.*
 
-private fun readAnglesCsv(path: String): List<List<Double>> =
+private fun readAnglesCsv(path: String): List<List<String>> =
     File(path).readLines().filter { it.isNotBlank() }
-        .map { it.split(',').map { s -> s.trim().toDouble() } }
+        .map { it.split(',').map { s -> s.trim() } }
+
+private fun readAnglesString(anglesString: String): List<List<String>> =
+    anglesString.split("\n").filter { it.isNotBlank() }
+        .map { it.split(',').map { s -> s.trim() } }
 
 private class ArrowGrid(
-    private val ang: List<List<Double>>,
+    private val ang: List<List<String>>,
     private val cell: Int = 32
 ) : JPanel() {
     init {
@@ -33,9 +37,12 @@ private class ArrowGrid(
         val phi = Math.PI / 7
 
         for (r in ang.indices) for (c in ang[r].indices) {
+            val angle = ang[r][c]
+            if (angle.isEmpty()) continue
+            val angleDouble = angle.toDouble()
             val cx = c * cell + cell / 2.0
             val cy = r * cell + cell / 2.0
-            val a = Math.toRadians(ang[r][c])        // 0° вправо, 90° вверх
+            val a = Math.toRadians(angleDouble)        // 0° вправо, 90° вверх
             val x2 = cx + len * cos(a)
             val y2 = cy - len * sin(a)               // инверсия Y для экрана
 
@@ -54,10 +61,13 @@ private class ArrowGrid(
     }
 }
 
-fun main(args: Array<String>) {
-    val angles = readAnglesCsv("src/main/kotlin/viz/data.csv")
+val frame = JFrame("Angle matrix")
+
+fun showLayout(anglesString: String) {
+    val angles = readAnglesString(anglesString)
+//    val angles = readAnglesCsv("src/main/kotlin/viz/data.csv")
     SwingUtilities.invokeLater {
-        JFrame("Angle matrix").apply {
+        frame.apply {
             defaultCloseOperation = JFrame.EXIT_ON_CLOSE
             contentPane = JScrollPane(ArrowGrid(angles))
             pack(); setLocationRelativeTo(null); isVisible = true

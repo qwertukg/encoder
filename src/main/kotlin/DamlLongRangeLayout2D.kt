@@ -1,243 +1,359 @@
+import viz.showLayout
+import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.sqrt
+import kotlin.random.Random
+import kotlin.time.Duration
 import kotlin.time.measureTime
 
 /**
- * Минимальная реализация дальнего (long-range) алгоритма раскладки из DAML.pdf.
+ * DamlLayout2D — раскладка разрежённых бинарных кодов на 2D решётку.
  *
- * В терминах раздела 5.5.1 статьи класс моделирует ранний этап раскладки, когда точки
- * переставляются «дальними» обменами в пределах большого радиуса для сглаживания глобальной
- * структуры энерго-рельефа. В качестве входа используется список пар «угол-код», где код — это
- * дискретный бинарный вектор, описывающий точку в многомерном пространстве признаков, а угол —
- * вспомогательная величина для визуализации (см. рис. 17).
+ * Ключевые идеи, реализованные в этом классе:
+ * 1) Long-range раскладка: минимизируем глобальную энергию пар перестановками точек.
+ *    Энергия пары (p,q) относительно остальных точек V^+ оценивается как сумма
+ *      φ = Σ_{r∈V^+} [ sim(p,r) * dist(p,r) + sim(q,r) * dist(q,r) ].
+ *    Для гипотетического свапа p↔q считаем φ_swap аналогично и применяем обмен,
+ *    если Δ = φ_swap - φ_current < 0. Для эффективности Δ считаем аналитически:
+ *      Δ = Σ_{r∈V^+} (sim(q,r) - sim(p,r)) * (d(p,r) - d(q,r)).
+ *    Это позволяет за один проход по r получить обе энергии (без двойного пересчёта).
  *
- * Алгоритм оперирует квадратной решёткой и минимизирует суммарную энергию (раздел 5.6) за счёт
- * попарных перестановок точек. Энергия пары вычисляется согласно принципу «подобные коды
- * должны быть ближе», то есть чем сильнее похожи коды, тем выше штраф за расстояние между ними.
+ * 2) Метрика сходства для разрежённых кодов — Жаккар по единичным битам (не «доля равных битов»),
+ *    т.к. последняя завышает сходство из-за доминирования нулей.
+ *    Затем применяется пороговая функция τ(x) = x * σ(η(x - λ)), где σ — сигмоида.
+ *
+ * 3) Стохастика: первую точку выбираем в случайном порядке; вторую — внутри радиуса.
+ *    Это уменьшает зависимость от порядка обхода и лучше «разлепляет» карту на ранних стадиях.
+ *
+ * 4) Батчевые свапы: в каждой эпохе собираем набор выгодных обменов без общих индексов
+ *    и применяем их одним коммитом, что снижает артефакты порядка и локальные колебания.
+ *
+ * 5) Без sqrt: работаем с квадратами расстояний — критерий сравнения сохраняется,
+ *    а вычисления быстрее.
+ *
+ * 6) Опциональная short-range «полировка»: локальная минимизация энергии в малом радиусе,
+ *    чтобы пригладить мелкие огрехи топологии, не ломая глобальную структуру.
  */
-class DamlLongRangeLayout2D(private val angleCodes: List<Pair<Double, IntArray>>) {
+class DamlLayout2D(
+    private val angleCodes: List<Pair<Double, IntArray>>,
+    randomizeStart: Boolean = true,
+    seed: Int = 42,
+) {
+    private val rng = Random(seed)
+    private val n = angleCodes.size
+    private val gridSize: Int = ceil(kotlin.math.sqrt(n.toDouble())).toInt()
 
-    private val gridSize: Int = ceil(sqrt(angleCodes.size.toDouble())).toInt()
-    private val grid: MutableList<Int?> = MutableList(gridSize * gridSize) { index ->
-        if (index < angleCodes.size) index else null
+    // Решётка хранит индексы кодов или null (если ячейка пустая)
+    private val grid: MutableList<Int?> = MutableList(gridSize * gridSize) { null }
+
+    init {
+        // Инициализация: случайно или последовательно кладём индексы 0..n-1 в первые n ячеек
+        val indices = (0 until grid.size).toMutableList()
+        if (randomizeStart) indices.shuffle(rng)
+        var k = 0
+        for (cell in indices) {
+            if (k >= n) break
+            grid[cell] = k++
+        }
     }
 
+    // ======================= ПУБЛИЧНЫЕ API =======================
+
     /**
-     * Выполняет серию дальних обменов (см. раздел 5.5.1 DAML.pdf) для упорядочивания кодов.
+     * Long-range раскладка.
      *
-     * На каждой итерации рассматривается каждая позиция решётки и выполняется локальный поиск
-     * кандидатов в заданном радиусе (идея «охвата дальнего поля»). Если перестановка двух точек
-     * уменьшает их общую энергию, обмен подтверждается. Так повторяется указанное количество
-     * эпох, что имитирует постепенное «охлаждение» (см. комментарий в разделе 5.8 о контроле
-     * параметров).
-     *
-     * @param farRadius Радиус дальнего поиска (аналог r в таблице гиперпараметров).
-     * @param epochs Количество эпох обхода решётки.
-     * @return Список троек «исходный угол, координата y, координата x» для визуализации и анализа.
+     * @param farRadius радиус дальнего поиска в клетках
+     * @param epochs количество эпох (полных обходов)
+     * @param minSim минимальное базовое сходство (Жаккар) для отбора пары (ускоряет)
+     * @param lambdaStart начальное λ в τ-пороге (фильтрует слабые связи)
+     * @param lambdaEnd финальное λ (можно поднять к концу, чтобы «дожать» сильные связи)
+     * @param eta крутизна сигмоиды в τ
+     * @param maxBatchFrac максимум доли точек, участвующих в свапах за эпоху (0..1)
+     * @param log печатать состояние решётки по эпохам
+     * @return список троек (угол, y, x) для исходных кодов
      */
-    fun layout(farRadius: Int, epochs: Int): List<Triple<Double, Int, Int>> {
-        // Перед стартом фиксируем конфигурацию решётки (аналог исходного распределения на рис. 17a),
-        // чтобы сопоставлять динамику с описанной в разделе 5.5.1.
-        logGridState(-1)
-
-        if (angleCodes.isEmpty()) return emptyList()
-
-        // В терминах статьи каждая эпоха — это полный проход по всей плоскости V, где выполняются
-        // проверки обменов «дальних» пар. Повторяем столько раз, сколько задано параметром epochs.
-        repeat(epochs.coerceAtLeast(0)) { epoch ->
-            // Измеряем длительность цикла для наблюдения за «температурой» процесса (см. обсуждение
-            // режима охлаждения в разделе 5.8). Это не часть алгоритма, но помогает калибровать шаги.
-            val dt = measureTime {
-                // Перебираем каждую ячейку решётки — это итерация по всем возможным парам (y1, x1)
-                // из формул (5.5.1). Индекс firstIndex разворачивается в координаты при необходимости.
-                for (firstIndex in grid.indices) {
-                    // Получаем код, который сейчас находится в рассматриваемой позиции. Если ячейка
-                    // пуста (за пределами исходного множества), шаг пропускается.
-                    var currentFirstCodeIndex = grid[firstIndex] ?: continue
-
-                    // В соответствии с определением дальнего шага (раздел 5.5.1) рассматриваем все
-                    // точки в радиусе r = farRadius. Это множество R, по которому суммируются энергии
-                    // пар согласно формулам ϕ_c и ϕ_s.
-                    val secondCandidates = candidateIndices(firstIndex, farRadius)
-
-                    for (secondIndex in secondCandidates) {
-                        val secondCodeIndex = grid[secondIndex] ?: continue
-                        // Игнорируем пару, если оба индекса указывают на одну и ту же точку — энергия
-                        // такой пары по формуле (ϕ_c) не изменится (см. строки 1390-1394 текста).
-                        if (currentFirstCodeIndex == secondCodeIndex) continue
-
-                        // Расчёт текущей энергии пары ϕ_c по формуле (5.5.1), где слагаемые s1⋅d1 и
-                        // s2⋅d2 аккумулируются внутри pairEnergy.
-                        val currentEnergy = pairEnergy(firstIndex, secondIndex)
-                        // Расчёт энергии после гипотетического обмена ϕ_s из той же секции, где
-                        // коэффициенты s1 и s2 меняются местами (см. строки 1434-1439).
-                        val swappedEnergy = swappedPairEnergy(firstIndex, secondIndex)
-
-                        // Если обмен уменьшает энергию (ϕ_s < ϕ_c), то реализуем перестановку,
-                        // тем самым продвигая систему к глобальному минимуму, как и предписано в
-                        // разделе 5.5.1 (строки 1440-1445).
-                        if (swappedEnergy < currentEnergy) {
-                            val previousFirstCodeIndex = currentFirstCodeIndex
-                            grid[firstIndex] = secondCodeIndex
-                            currentFirstCodeIndex = secondCodeIndex
-                            grid[secondIndex] = previousFirstCodeIndex
-                        }
-                    }
-                }
-            }
-
-            // Фиксируем длительность эпохи и состояние решётки, что соответствует практике
-            // наблюдения эволюции карты (рис. 17 и комментарии после раздела 5.5.1).
-            println("duration = $dt")
-            logGridState(epoch)
+    fun layoutLongRange(
+        farRadius: Int,
+        epochs: Int,
+        minSim: Double = 0.0,
+        lambdaStart: Double = 0.45,
+        lambdaEnd: Double = 0.70,
+        eta: Double = 10.0,
+        maxBatchFrac: Double = 0.5,
+        log: Boolean = true,
+    ): List<Triple<Double, Int, Int>> {
+        if (n == 0) return emptyList()
+        if (log) {
+            val csv = logGridState(epoch = -1, tag = "start")
+            showLayout(csv)
         }
 
-        // По завершении всех эпох строим итоговую карту координат (аналог таблиц позиций, которые
-        // получаются после выполнения алгоритма на длинном диапазоне — раздел 5.5).
+        repeat(epochs.coerceAtLeast(0)) { e ->
+            val lam = lerp(lambdaStart, lambdaEnd, if (epochs <= 1) 1.0 else e.toDouble() / (epochs - 1).coerceAtLeast(1))
+            val dt: Duration = measureTime {
+                doOneEpoch(
+                    searchRadius = farRadius,
+                    lambda = lam,
+                    eta = eta,
+                    minSim = minSim,
+                    maxBatchFrac = maxBatchFrac,
+                    localEnergyRadius = null, // long-range: считаем энергию по всей решётке
+                )
+            }
+            if (log) {
+                println("long-range epoch=${e + 1}  lambda=%.3f  duration=%s".format(lam, dt))
+                val csv = logGridState(epoch = e, tag = "long")
+                showLayout(csv)
+            }
+        }
         return buildCoordinateMap()
     }
 
     /**
-     * Печатает текущее состояние решётки в человекочитаемом виде.
-     * Это отвечает практике визуального мониторинга процесса (рис. 17 и обсуждение в разделе 5.8).
+     * Опциональная short-range «полировка» — локальная минимизация в малом радиусе.
+     * По умолчанию НЕ вызывается; используйте по необходимости после long-range.
      */
-    private fun logGridState(epoch: Int) {
-        val builder = StringBuilder()
-        for (y in 0 until gridSize) {
-            val row = (0 until gridSize).joinToString(separator = ",") { x ->
-                val codeIndex = grid[y * gridSize + x]
-                codeIndex?.let { angleCodes[it].first.toString() } ?: ""
+    fun layoutShortRange(
+        nearRadius: Int,
+        epochs: Int,
+        minSim: Double = 0.0,
+        lambda: Double = 0.70,
+        eta: Double = 10.0,
+        maxBatchFrac: Double = 0.5,
+        log: Boolean = true,
+    ) {
+        if (n == 0) return
+        repeat(epochs.coerceAtLeast(0)) { e ->
+            val dt: Duration = measureTime {
+                doOneEpoch(
+                    searchRadius = nearRadius,
+                    lambda = lambda,
+                    eta = eta,
+                    minSim = minSim,
+                    maxBatchFrac = maxBatchFrac,
+                    localEnergyRadius = nearRadius, // short-range: локальная энергия
+                )
             }
-            builder.appendLine(row)
-        }
-        println("Эпоха ${epoch + 1}:\n${builder.toString().trimEnd()}\n")
-    }
-
-    /**
-     * Возвращает индексы клеток, попадающих в радиус дальнего поиска от исходной позиции.
-     * Суть совпадает с описанием «дальнего» обзора в разделе 5.5.1: мы просматриваем окрестность
-     * в пределах радиуса r, исключая текущую точку.
-     */
-    private fun candidateIndices(sourceIndex: Int, farRadius: Int): Sequence<Int> {
-        val radiusSquared = farRadius.toDouble().pow(2.0)
-        val sourceY = sourceIndex / gridSize
-        val sourceX = sourceIndex % gridSize
-        return grid.indices.asSequence().filter { targetIndex ->
-            if (targetIndex == sourceIndex) return@filter false
-            val targetY = targetIndex / gridSize
-            val targetX = targetIndex % gridSize
-            val dy = (targetY - sourceY).toDouble()
-            val dx = (targetX - sourceX).toDouble()
-            dy * dy + dx * dx <= radiusSquared
-        }
-    }
-
-    /**
-     * Вычисляет энергию текущего расположения пары точек относительно остальной решётки.
-     *
-     * Энергия понимается так же, как в разделе 5.6: расстояние взвешивается мерой сходства кодов.
-     * Чем ближе код другой точки, тем сильнее нас «штрафует» за большую дистанцию. Поэтому обмены
-     * стремятся притянуть похожие коды друг к другу и разнести непохожие.
-     */
-    private fun pairEnergy(firstIndex: Int, secondIndex: Int): Double {
-        val firstCodeIndex = grid[firstIndex] ?: return 0.0
-        val secondCodeIndex = grid[secondIndex] ?: return 0.0
-        val firstCoord = toCoord(firstIndex)
-        val secondCoord = toCoord(secondIndex)
-        var energy = 0.0
-        grid.forEachIndexed { otherIndex, otherCodeIndex ->
-            val codeIndex = otherCodeIndex ?: return@forEachIndexed
-            val otherCoord = toCoord(otherIndex)
-            energy += similarity(firstCodeIndex, codeIndex) * distance(firstCoord, otherCoord)
-            energy += similarity(secondCodeIndex, codeIndex) * distance(secondCoord, otherCoord)
-        }
-        return energy
-    }
-
-    /**
-     * Вычисляет энергию, которую получила бы пара после обмена местами.
-     * Это прямое воплощение идеи «point exchange» из раздела 5.6: мы проверяем гипотетическую
-     * перестановку, не модифицируя остальной массив, и оцениваем, уменьшилась ли энергия.
-     */
-    private fun swappedPairEnergy(firstIndex: Int, secondIndex: Int): Double {
-        val firstCodeIndex = grid[firstIndex] ?: return 0.0
-        val secondCodeIndex = grid[secondIndex] ?: return 0.0
-        val firstCoord = toCoord(firstIndex)
-        val secondCoord = toCoord(secondIndex)
-        var energy = 0.0
-        grid.forEachIndexed { otherIndex, otherCodeIndex ->
-            val codeIndex = otherCodeIndex ?: return@forEachIndexed
-            val otherCoord = toCoord(otherIndex)
-            energy += similarity(secondCodeIndex, codeIndex) * distance(firstCoord, otherCoord)
-            energy += similarity(firstCodeIndex, codeIndex) * distance(secondCoord, otherCoord)
-        }
-        return energy
-    }
-
-    /**
-     * Мера сходства между двумя кодами.
-     *
-     * В статье (см. раздел 5.5 и 5.6) упоминается, что для дальнего шага подходит грубая метрика,
-     * подчеркивающая наличие совпадающих битов. Здесь реализовано простое отношение числа равных
-     * битов к длине кода, дополнительно пропущенное через сигмоиду-порог (аналог λ-порогов).
-     */
-    private fun similarity(firstCodeIndex: Int, secondCodeIndex: Int): Double {
-        val first = angleCodes[firstCodeIndex].second
-        val second = angleCodes[secondCodeIndex].second
-        val length = minOf(first.size, second.size)
-        if (length == 0) return 0.0
-        var equalBits = 0
-        for (i in 0 until length) {
-            if (first[i] == second[i]) {
-                equalBits += 1
+            if (log) {
+                println("short-range epoch=${e + 1}  lambda=%.3f  duration=%s".format(lambda, dt))
+                logGridState(epoch = e, tag = "near")
             }
         }
-        val baseSimilarity = equalBits.toDouble() / length.toDouble()
-        return threshold(baseSimilarity)
     }
 
+    /** Итоговые координаты (угол, y, x) для исходных кодов. */
+    fun positions(): List<Triple<Double, Int, Int>> = buildCoordinateMap()
+
+    // ======================= ОСНОВНАЯ ЭПОХА =======================
+
     /**
-     * Пороговая функция λ с плавным переходом (раздел 5.5, обсуждение о клиппинге).
+     * Один батчевый проход:
+     *  - случайный порядок «первых» позиций
+     *  - поиск лучшего «второго» в радиусе
+     *  - расчёт выгод свапов Δ по аналитической формуле
+     *  - отбор неконфликтующих свапов и атомарное применение батча
      *
-     * В DAML λ отвечает за отбрасывание слабых связей. Здесь реализован сглаженный вариант через
-     * сигмоид, чтобы избегать жёстких разрывов: малые значения подавляются, а сильные почти не
-     * искажаются.
+     * Если localEnergyRadius == null — оцениваем Δ по всей решётке (long-range).
+     * Если localEnergyRadius != null — считаем Δ только по соседям в этом радиусе (short-range).
      */
-    private fun threshold(value: Double, lambda: Double = 0.5, eta: Double = 10.0): Double {
-        val sigmoid = 1.0 / (1.0 + exp(-eta * (value - lambda)))
-        return value * sigmoid
+    private fun doOneEpoch(
+        searchRadius: Int,
+        lambda: Double,
+        eta: Double,
+        minSim: Double,
+        maxBatchFrac: Double,
+        localEnergyRadius: Int?,
+    ) {
+        val occupied = grid.indices.filter { grid[it] != null }.toMutableList()
+        occupied.shuffle(rng)
+
+        val taken = BooleanArray(grid.size) // запрет двойного участия в батче
+        val swaps = ArrayList<Pair<Int, Int>>() // пары индексов ячеек (i, j)
+        val maxSwaps = (occupied.size * maxBatchFrac).toInt().coerceAtLeast(1)
+
+        for (firstIndex in occupied) {
+            if (swaps.size >= maxSwaps) break
+            if (taken[firstIndex]) continue
+            val iCode = grid[firstIndex] ?: continue
+
+            var bestSecond = -1
+            var bestDelta = 0.0 // Ищем Δ < 0 (уменьшение энергии)
+            val candidates = candidateIndices(firstIndex, searchRadius)
+                .filter { it != firstIndex && !taken[it] && grid[it] != null }
+
+            for (secondIndex in candidates) {
+                val jCode = grid[secondIndex]!!
+                // Базовый Жаккар как быстрый фильтр (без τ)
+                val baseSim = jaccard(iCode, jCode)
+                if (baseSim < minSim) continue
+
+                // Δ по всей решётке или локально (в малом радиусе)
+                val delta = energyDeltaAfterSwap(
+                    firstIndex = firstIndex,
+                    secondIndex = secondIndex,
+                    lambda = lambda,
+                    eta = eta,
+                    restrictRadius = localEnergyRadius
+                )
+
+                if (bestSecond == -1 || delta < bestDelta) {
+                    bestSecond = secondIndex
+                    bestDelta = delta
+                }
+            }
+
+            if (bestSecond >= 0 && bestDelta < 0.0 && !taken[bestSecond]) {
+                swaps += firstIndex to bestSecond
+                taken[firstIndex] = true
+                taken[bestSecond] = true
+            }
+        }
+
+        // Применяем батч неконфликтующих свапов (атомарно)
+        for ((a, b) in swaps) {
+            val ia = grid[a]
+            val ib = grid[b]
+            grid[a] = ib
+            grid[b] = ia
+        }
     }
 
+    // ======================= ЭНЕРГИЯ/СХОДСТВО =======================
+
     /**
-     * Евклидово расстояние между двумя клетками решётки.
-     * Непосредственно соответствует метрике расстояний в энергетической формуле (раздел 5.6).
+     * Аналитическая дельта энергии Δ = φ_swap - φ_current.
+     * Для каждой «третьей» точки r:
+     *   d1 = dist2(p, r), d2 = dist2(q, r)
+     *   s1 = τ(sim(iCode, rCode)), s2 = τ(sim(jCode, rCode))
+     *   вклад в Δ: (s2 - s1) * (d1 - d2)
+     *
+     * Если restrictRadius == null — суммируем по всем занятым r.
+     * Иначе — только по r в круге радиуса restrictRadius вокруг p и q.
      */
-    private fun distance(a: Pair<Int, Int>, b: Pair<Int, Int>): Double {
+    private fun energyDeltaAfterSwap(
+        firstIndex: Int,
+        secondIndex: Int,
+        lambda: Double,
+        eta: Double,
+        restrictRadius: Int?,
+    ): Double {
+        val iCode = grid[firstIndex] ?: return 0.0
+        val jCode = grid[secondIndex] ?: return 0.0
+        val p = toCoord(firstIndex)
+        val q = toCoord(secondIndex)
+
+        val useLocal = restrictRadius != null
+        val r2 = restrictRadius?.toDouble()?.pow(2.0) ?: 0.0
+
+        var delta = 0.0
+        grid.forEachIndexed { rIndex, rCodeIdx ->
+            val rCode = rCodeIdx ?: return@forEachIndexed
+            if (rIndex == firstIndex || rIndex == secondIndex) return@forEachIndexed
+
+            val rCoord = toCoord(rIndex)
+            val d1 = dist2(p, rCoord)
+            val d2 = dist2(q, rCoord)
+
+            if (useLocal) {
+                val d1ok = d1 <= r2
+                val d2ok = d2 <= r2
+                if (!d1ok && !d2ok) return@forEachIndexed
+            }
+
+            val s1 = tau(jaccard(iCode, rCode), lambda, eta)
+            val s2 = tau(jaccard(jCode, rCode), lambda, eta)
+
+            delta += (s2 - s1) * (d1 - d2)
+        }
+        return delta
+    }
+
+    /** Жаккар по единичным битам IntArray{0,1}. */
+    private fun jaccard(i: Int, j: Int): Double {
+        val a = angleCodes[i].second
+        val b = angleCodes[j].second
+        val m = minOf(a.size, b.size)
+        var inter = 0
+        var uni = 0
+        var k = 0
+        while (k < m) {
+            val ak = a[k]
+            val bk = b[k]
+            val a1 = ak == 1
+            val b1 = bk == 1
+            if (a1 || b1) uni++
+            if (a1 && b1) inter++
+            k++
+        }
+        if (uni == 0) return 0.0
+        return inter.toDouble() / uni.toDouble()
+    }
+
+    /** τ-порог: τ(x) = x * σ(η(x - λ)). */
+    private fun tau(x: Double, lambda: Double, eta: Double): Double {
+        val sig = 1.0 / (1.0 + exp(-eta * (x - lambda)))
+        return x * sig
+    }
+
+    // ======================= ГЕОМЕТРИЯ/УТИЛИТЫ =======================
+
+    /** Кандидаты (индексы ячеек) в круге радиуса r от sourceIndex. */
+    private fun candidateIndices(sourceIndex: Int, radius: Int): Sequence<Int> {
+        val r2 = radius.toDouble().pow(2.0)
+        val (sy, sx) = toCoord(sourceIndex)
+        return grid.indices.asSequence().filter { idx ->
+            if (idx == sourceIndex) return@filter false
+            val (ty, tx) = toCoord(idx)
+            val dy = (ty - sy).toDouble()
+            val dx = (tx - sx).toDouble()
+            (dy * dy + dx * dx) <= r2
+        }
+    }
+
+    /** Квадрат евклидова расстояния между клетками (без sqrt). */
+    private fun dist2(a: Pair<Int, Int>, b: Pair<Int, Int>): Double {
         val dy = (a.first - b.first).toDouble()
         val dx = (a.second - b.second).toDouble()
-        return sqrt(dy * dy + dx * dx)
+        return dy * dy + dx * dx
     }
 
-    /**
-     * Преобразует линейный индекс в двумерные координаты на решётке.
-     * Это вспомогательная функция для всех расчётов, связанных с расстояниями и визуализацией.
-     */
+    /** Линейная интерполяция. */
+    private fun lerp(a: Double, b: Double, t: Double): Double = a + (b - a) * t.coerceIn(0.0, 1.0)
+
+    /** Индекс -> (y, x). */
     private fun toCoord(index: Int): Pair<Int, Int> = index / gridSize to index % gridSize
 
-    /**
-     * Формирует итоговую карту координат для исходных кодов.
-     * Это аналог таблиц координат, которые строятся после завершения цикла раскладки (см. раздел 5.5).
-     */
+    /** Текущая карта координат (угол, y, x) для исходных кодов. */
     private fun buildCoordinateMap(): List<Triple<Double, Int, Int>> {
-        val result = MutableList(angleCodes.size) { Triple(0.0, 0, 0) }
-        grid.forEachIndexed { index, codeIndex ->
-            val actualIndex = codeIndex ?: return@forEachIndexed
-            val (angle, _) = angleCodes[actualIndex]
-            val coord = toCoord(index)
-            result[actualIndex] = Triple(angle, coord.first, coord.second)
+        val res = MutableList(n) { Triple(0.0, 0, 0) }
+        grid.forEachIndexed { idx, codeIndex ->
+            val actual = codeIndex ?: return@forEachIndexed
+            val (angle, _) = angleCodes[actual]
+            val (y, x) = toCoord(idx)
+            res[actual] = Triple(angle, y, x)
         }
-        return result
+        return res
+    }
+
+    /** Печать состояния решётки (для отладки/мониторинга). */
+    private fun logGridState(epoch: Int, tag: String): String {
+        val sep = "," // безопасный разделитель для копипаста в Excel/CSV
+        val sb = StringBuilder()
+        for (y in 0 until gridSize) {
+            val row = (0 until gridSize).joinToString(sep) { x ->
+                val id = grid[y * gridSize + x]
+                when (id) {
+                    null -> "-"                                   // явная пустая клетка
+                    else -> String.format(Locale.US, "%.1f", angleCodes[id].first)
+                    // если углы всегда кратны 1°, можно короче:
+                    // else -> angleCodes[id].first.roundToInt().toString()
+                }
+            }
+            sb.appendLine(row)
+        }
+        println("Эпоха ${epoch + 1} [$tag]:\n${sb.toString().trimEnd()}\n")
+        return sb.toString().trimEnd()
     }
 }

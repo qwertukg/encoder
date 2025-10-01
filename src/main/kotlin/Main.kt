@@ -16,16 +16,30 @@ fun main() {
     )
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
-    (0..150).forEach {
+    (0..99).forEach {
         val angleRadians = it * PI / 180.0
         val code = encoder.encode(angleRadians)
         codes.add(it.toDouble() to code)
-        println(code.joinToString("", "[", "]") + ":$it")
+        println("$it:" + code.joinToString("", "[", "]"))
 //        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
     }
 
-    val layout = DamlLongRangeLayout2D(codes)
-    val matrix = layout.layout(64, 150)
+    val layout = DamlLayout2D(
+        angleCodes = codes,
+        randomizeStart = true,
+        seed = 42
+    )
+
+    val posAfterLong = layout.layoutLongRange(
+        farRadius = 16,
+        epochs = 100,
+        minSim = 0.02,
+        lambdaStart = 0.40,
+        lambdaEnd = 0.72,
+        eta = 10.0,
+        maxBatchFrac = 0.40,
+        log = true
+    )
 
 
     println("Done!")
