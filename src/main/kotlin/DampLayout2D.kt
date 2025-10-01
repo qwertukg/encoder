@@ -303,7 +303,7 @@ class DampLayout2D(
     /** Кандидаты (индексы ячеек) в круге радиуса r от sourceIndex. */
     private fun candidateIndices(sourceIndex: Int, radius: Int): Sequence<Int> {
         val r = Random.nextInt(1..radius)
-        val r2 = radius.toDouble().pow(2.0)
+        val r2 = r.toDouble().pow(2.0)
         val (sy, sx) = toCoord(sourceIndex)
         return grid.indices.asSequence().filter { idx ->
             if (idx == sourceIndex) return@filter false
