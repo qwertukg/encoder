@@ -196,7 +196,7 @@ private fun validateCodeSize(codeSizeInBits: Int, layers: List<SlidingWindowAngl
 /* -----------------------------
    Пример использования (опционально):
 
-fun main() {
+fun viz.main() {
     val encoder = SlidingWindowAngleEncoder()
     val angleRadians = 200.0 * PI / 180.0
     val code = encoder.encode(angleRadians)

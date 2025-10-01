@@ -1,5 +1,4 @@
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
+import kotlin.math.PI
 
 fun main() {
     val encoder = SlidingWindowAngleEncoder(
@@ -14,12 +13,43 @@ fun main() {
         initialCodeSizeInBits = 256
     )
 
-    val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
+    val codes = mutableListOf<Pair<Double, IntArray>>()
+    (0..359).forEach {
+        val angleRadians = it * PI / 180.0
+        val code = encoder.encode(angleRadians)
+        codes.add(it.toDouble() to code)
+        println("$it:" + code.joinToString("", "[", "]"))
+//        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
+    }
 
-    embeddedServer(Netty, port = 8080) {
-        detectorsUiModule(
-            encoder = encoder,
-            backgroundAnalyzer = backgroundCorrelationAnalyzer
-        )
-    }.start(wait = true)
+    val layout = DampLayout2D(
+        angleCodes = codes,
+        randomizeStart = true,
+        seed = 42
+    )
+
+    val posAfterLong = layout.layoutLongRange(
+        farRadius = 20,
+        epochs = 100,
+        minSim = 0.00,
+        lambdaStart = 0.10,
+        lambdaEnd = 0.90,
+        eta = 0.0,
+        maxBatchFrac = 0.50,
+        log = true
+    )
+
+
+    println("Done!")
+
+
+
+//    val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
+//
+//    embeddedServer(Netty, port = 8080) {
+//        detectorsUiModule(
+//            encoder = encoder,
+//            backgroundAnalyzer = backgroundCorrelationAnalyzer
+//        )
+//    }.start(wait = true)
 }
