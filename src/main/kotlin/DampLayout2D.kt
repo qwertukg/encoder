@@ -49,13 +49,13 @@ class DampLayout2D(
     private val grid: MutableList<Int?> = MutableList(gridSize * gridSize) { null }
 
     init {
-        // Инициализация: случайно или последовательно кладём индексы 0..n-1 в первые n ячеек
-        val indices = (0 until grid.size).toMutableList()
-        if (randomizeStart) indices.shuffle(rng)
-        var k = 0
-        for (cell in indices) {
-            if (k >= n) break
-            grid[cell] = k++
+        // Инициализация: кладём коды в первые n ячеек (строго слева направо, сверху вниз),
+        // но случайно перемешиваем порядок самих кодов — так пустые клетки остаются только в
+        // конце матрицы, а стартовая конфигурация остаётся стохастической (см. DAML, разд. 5.6).
+        val codeOrder = (0 until n).toMutableList()
+        if (randomizeStart) codeOrder.shuffle(rng)
+        codeOrder.forEachIndexed { idx, codeIndex ->
+            grid[idx] = codeIndex
         }
     }
 
@@ -345,7 +345,7 @@ class DampLayout2D(
             val row = (0 until gridSize).joinToString(sep) { x ->
                 val id = grid[y * gridSize + x]
                 when (id) {
-                    null -> "-"                                   // явная пустая клетка
+                    null -> ""                                    // пустая клетка → пустое поле CSV
                     else -> String.format(Locale.US, "%.1f", angleCodes[id].first)
                     // если углы всегда кратны 1°, можно короче:
                     // else -> angleCodes[id].first.roundToInt().toString()
