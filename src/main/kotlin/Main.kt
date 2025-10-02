@@ -1,6 +1,10 @@
 import gpu.GpuDamlLayout2D_GL430
+import io.ktor.utils.io.InternalAPI
+import org.lwjgl.glfw.GLFW
+import viz.showAnglesGrid
 import kotlin.math.PI
 import kotlin.system.exitProcess
+import kotlin.time.measureTime
 
 fun main() {
     println("os.arch=" + System.getProperty("os.arch"))
@@ -18,7 +22,7 @@ fun main() {
     )
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
-    (0..359 step 5).forEach {
+    (0..359 step 1).forEach {
         val angleRadians = it * PI / 180.0
         val code = encoder.encode(angleRadians)
         codes.add(it.toDouble() to code)
@@ -26,48 +30,43 @@ fun main() {
 //        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
     }
 
-    val emptyCodes = (0..100).map { -100.0 to IntArray(256) }
+    val emptyCodes: List<Pair<Double?, IntArray>> = (0..100).map { null to IntArray(256) }
 
     // GPU processing
+    val gpuTime = measureTime {
+        val gpuLayout = GpuDamlLayout2D_GL430(codes + emptyCodes)
+        val outGPU =  gpuLayout.layoutLongRange(
+            farRadius = 20,
+            epochs = 100,
+            minSim = 0.00,
+            lambdaStart = 0.30,
+            lambdaEnd = 0.90,
+            eta = 0.0,
+            maxBatchFrac = 0.30,
+        )
+        gpuLayout.dispose()
+        showAnglesGrid(outGPU.map { it.first })
+    }
+    println("GPU Layout finished! Total time: $gpuTime")
 
-    val gpu = GpuDamlLayout2D_GL430(codes + emptyCodes)
-    gpu.layoutLongRange(
-        farRadius = 8,
-        epochs = 60,
-        minSim = 0.12,
-        lambdaStart = 0.46,
-        lambdaEnd   = 0.74,
-        eta = 10.0,
-        maxBatchFrac = 0.35
-    )
-
-    gpu.dispose()
-
-    println("GPU Layout finished!")
-
-    exitProcess(0)
 
     // CPU processing
 
-    val layout = DampLayout2D(
-        angleCodes = codes + emptyCodes,
-        randomizeStart = true,
-        seed = 42
-    )
-
-    layout.layoutLongRange(
-        farRadius = 20,
-        epochs = 100,
-        minSim = 0.00,
-        lambdaStart = 0.30,
-        lambdaEnd = 0.90,
-        eta = 0.0,
-        maxBatchFrac = 0.30,
-        log = true
-    )
-
-
-    println("CPU Layout finished! Total swaps: ${layout.swapsLog.joinToString(",")}")
+    val cpuTime = measureTime {
+        val layout = DampLayout2D(angleCodes = codes + emptyCodes)
+        val outCPU = layout.layoutLongRange(
+            farRadius = 20,
+            epochs = 100,
+            minSim = 0.00,
+            lambdaStart = 0.30,
+            lambdaEnd = 0.90,
+            eta = 0.0,
+            maxBatchFrac = 0.30,
+            log = false
+        )
+        showAnglesGrid(outCPU.map { it.first })
+    }
+    println("CPU Layout finished! Total time: $cpuTime")
 
 
 

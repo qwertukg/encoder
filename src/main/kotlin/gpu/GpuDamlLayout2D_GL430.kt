@@ -1,8 +1,10 @@
 package gpu
 
+import org.lwjgl.glfw.GLFW
 import org.lwjgl.opengl.GL43C.*
 import org.lwjgl.system.MemoryStack
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.ceil
 import kotlin.math.sqrt
 
@@ -14,8 +16,9 @@ import kotlin.math.sqrt
  * Вызов: val out = GpuDamlLayout2D_GL430(angleCodes).layoutLongRange(...)
  * Возврат: список Pair(angle, IntArray) в ПОРЯДКЕ обхода решётки (row-major).
  */
+@OptIn(ExperimentalUnsignedTypes::class)
 class GpuDamlLayout2D_GL430(
-    private val angleCodes: List<Pair<Double, IntArray>>,
+    private val angleCodes: List<Pair<Double?, IntArray>>,
     private val randomizeStart: Boolean = true,
     private val seed: Int = 42
 ) {
@@ -38,6 +41,15 @@ class GpuDamlLayout2D_GL430(
     private val gridInit = IntArray(gridSize * gridSize) { -1 }
 
     init {
+        GLFW.glfwInit()
+        GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE)
+        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MAJOR, 4)
+        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MINOR, 3) // просим 4.3
+        val win = GLFW.glfwCreateWindow(64, 64, "ctx", 0, 0)
+        require(win != 0L) { "GLFW window failed" }
+        GLFW.glfwMakeContextCurrent(win)
+        org.lwjgl.opengl.GL.createCapabilities()   // ВАЖНО: вызвать до любых gl* вызовов
+
         // начальная раскладка: первые n ячеек заполняем 0..n-1
         val order = (0 until n).toMutableList().also {
             if (randomizeStart) it.shuffle(java.util.Random(seed.toLong()))
@@ -68,7 +80,7 @@ class GpuDamlLayout2D_GL430(
         lambdaEnd: Double = 0.70,
         eta: Double = 10.0,
         maxBatchFrac: Double = 0.5,
-    ): List<Pair<Double, IntArray>> {
+    ): List<Pair<Double?, IntArray>> {
         // загрузка исходных буферов
         uploadSSBO(ssboCodes, codesPacked)
         uploadSSBO(ssboGrid, gridInit)
@@ -132,7 +144,7 @@ class GpuDamlLayout2D_GL430(
 
         // финальный grid → возвращаем список в порядке решётки (row-major)
         val finalGrid = downloadGrid()
-        val out = ArrayList<Pair<Double, IntArray>>(n)
+        val out = ArrayList<Pair<Double?, IntArray>>(n)
         for (cell in 0 until finalGrid.size) {
             val codeIdx = finalGrid[cell]
             if (codeIdx >= 0) {
@@ -195,9 +207,12 @@ class GpuDamlLayout2D_GL430(
     private fun downloadInts(buffer: Int, count: Int): IntArray {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer)
         val size = glGetBufferParameteri(GL_SHADER_STORAGE_BUFFER, GL_BUFFER_SIZE)
-        val tmp = ByteBuffer.allocateDirect(size)
+        require(size >= count * 4) { "SSBO too small: size=$size, need=${count*4}" }
+
+        val tmp = ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder())
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, tmp)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
         tmp.rewind()
         val ib = tmp.asIntBuffer()
         val out = IntArray(count)
@@ -208,9 +223,12 @@ class GpuDamlLayout2D_GL430(
     private fun downloadFloats(buffer: Int, count: Int): FloatArray {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer)
         val size = glGetBufferParameteri(GL_SHADER_STORAGE_BUFFER, GL_BUFFER_SIZE)
-        val tmp = ByteBuffer.allocateDirect(size)
+        require(size >= count * 4) { "SSBO too small: size=$size, need=${count*4}" }
+
+        val tmp = ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder())
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, tmp)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+
         tmp.rewind()
         val fb = tmp.asFloatBuffer()
         val out = FloatArray(count)
@@ -286,7 +304,7 @@ class GpuDamlLayout2D_GL430(
     }
 
     companion object {
-        // === Compute шейдер №1: лучший j и его Δ для каждой занятой ячейки i ===
+        // Compute шейдер 1: лучший j и его Δ для каждой занятой ячейки i
         private val COMPUTE_BEST_SRC = """
 #version 430 core
 layout(local_size_x = 256) in;
@@ -392,7 +410,7 @@ void main() {
 }
 """.trimIndent()
 
-        // === Compute шейдер №2: применяем свапы к grid (пары ячеек) ===
+        // Compute шейдер 2: применяем свапы к grid (пары ячеек)
         private val COMPUTE_SWAP_SRC = """
 #version 430 core
 layout(local_size_x = 256) in;

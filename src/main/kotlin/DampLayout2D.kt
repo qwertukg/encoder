@@ -38,7 +38,7 @@ import kotlin.time.measureTime
  *    чтобы пригладить мелкие огрехи топологии, не ломая глобальную структуру.
  */
 class DampLayout2D(
-    private val angleCodes: List<Pair<Double, IntArray>>,
+    private val angleCodes: List<Pair<Double?, IntArray>>,
     randomizeStart: Boolean = true,
     seed: Int = 42,
 ) {
@@ -85,7 +85,7 @@ class DampLayout2D(
         eta: Double = 10.0,
         maxBatchFrac: Double = 0.5,
         log: Boolean = true,
-    ): List<Triple<Double, Int, Int>> {
+    ): List<Triple<Double?, Int, Int>> {
         if (n == 0) return emptyList()
         if (log) {
             val csv = logGridState(epoch = -1, tag = "start")
@@ -296,8 +296,8 @@ class DampLayout2D(
     private fun toCoord(index: Int): Pair<Int, Int> = index / gridSize to index % gridSize
 
     /** Текущая карта координат (угол, y, x) для исходных кодов. */
-    private fun buildCoordinateMap(): List<Triple<Double, Int, Int>> {
-        val res = MutableList(n) { Triple(0.0, 0, 0) }
+    private fun buildCoordinateMap(): List<Triple<Double?, Int, Int>> {
+        val res = MutableList<Triple<Double?, Int, Int>>(n) { Triple(0.0, 0, 0) }
         grid.forEachIndexed { idx, codeIndex ->
             val actual = codeIndex ?: return@forEachIndexed
             val (angle, _) = angleCodes[actual]

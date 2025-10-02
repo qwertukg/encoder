@@ -13,7 +13,7 @@ private fun readAnglesString(anglesString: String): List<List<String>> =
     anglesString.split("\n").filter { it.isNotBlank() }
         .map { it.split(',').map { s -> s.trim() } }
 
-private class ArrowGrid(
+class ArrowGrid(
     private val ang: List<List<String>>,
     private val cell: Int = 32
 ) : JPanel() {
@@ -38,7 +38,7 @@ private class ArrowGrid(
 
         for (r in ang.indices) for (c in ang[r].indices) {
             val angle = ang[r][c]
-            if (angle.isEmpty() || angle == "-100.0") continue // TODO
+            if (angle.isEmpty() || angle == "n") continue // TODO
             val angleDouble = angle.toDouble()
             val cx = c * cell + cell / 2.0
             val cy = r * cell + cell / 2.0
