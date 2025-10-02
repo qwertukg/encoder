@@ -14,7 +14,7 @@ fun main() {
     )
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
-    (0..359).forEach {
+    (0..359 step 5).forEach {
         val angleRadians = it * PI / 180.0
         val code = encoder.encode(angleRadians)
         codes.add(it.toDouble() to code)
@@ -22,20 +22,22 @@ fun main() {
 //        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
     }
 
+    val emptyCodes = (0..100).map { -100.0 to IntArray(256) }
+
     val layout = DampLayout2D(
-        angleCodes = codes,
+        angleCodes = codes + emptyCodes,
         randomizeStart = true,
         seed = 42
     )
 
     val posAfterLong = layout.layoutLongRange(
         farRadius = 20,
-        epochs = 30,
+        epochs = 100,
         minSim = 0.00,
-        lambdaStart = 0.10,
+        lambdaStart = 0.30,
         lambdaEnd = 0.90,
         eta = 0.0,
-        maxBatchFrac = 0.50,
+        maxBatchFrac = 0.30,
         log = true
     )
 

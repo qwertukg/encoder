@@ -38,7 +38,7 @@ private class ArrowGrid(
 
         for (r in ang.indices) for (c in ang[r].indices) {
             val angle = ang[r][c]
-            if (angle.isEmpty()) continue
+            if (angle.isEmpty() || angle == "-100.0") continue // TODO
             val angleDouble = angle.toDouble()
             val cx = c * cell + cell / 2.0
             val cy = r * cell + cell / 2.0
