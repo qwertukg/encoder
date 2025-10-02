@@ -113,41 +113,6 @@ class DampLayout2D(
         return buildCoordinateMap()
     }
 
-    /**
-     * Опциональная short-range «полировка» — локальная минимизация в малом радиусе.
-     * По умолчанию НЕ вызывается; используйте по необходимости после long-range.
-     */
-    fun layoutShortRange(
-        nearRadius: Int,
-        epochs: Int,
-        minSim: Double = 0.0,
-        lambda: Double = 0.70,
-        eta: Double = 10.0,
-        maxBatchFrac: Double = 0.5,
-        log: Boolean = true,
-    ) {
-        if (n == 0) return
-        repeat(epochs.coerceAtLeast(0)) { e ->
-            val dt: Duration = measureTime {
-                doOneEpoch(
-                    searchRadius = nearRadius,
-                    lambda = lambda,
-                    eta = eta,
-                    minSim = minSim,
-                    maxBatchFrac = maxBatchFrac,
-                    localEnergyRadius = nearRadius, // short-range: локальная энергия
-                )
-            }
-            if (log) {
-                println("short-range epoch=${e + 1}  lambda=%.3f  duration=%s".format(lambda, dt))
-                logGridState(epoch = e, tag = "near")
-            }
-        }
-    }
-
-    /** Итоговые координаты (угол, y, x) для исходных кодов. */
-    fun positions(): List<Triple<Double, Int, Int>> = buildCoordinateMap()
-
     // ======================= ОСНОВНАЯ ЭПОХА =======================
 
     /**

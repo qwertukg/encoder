@@ -1,6 +1,10 @@
+import gpu.GpuDamlLayout2D_GL430
 import kotlin.math.PI
+import kotlin.system.exitProcess
 
 fun main() {
+    println("os.arch=" + System.getProperty("os.arch"))
+
     val encoder = SlidingWindowAngleEncoder(
         initialLayers = listOf(
             SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
@@ -24,13 +28,34 @@ fun main() {
 
     val emptyCodes = (0..100).map { -100.0 to IntArray(256) }
 
+    // GPU processing
+
+    val gpu = GpuDamlLayout2D_GL430(codes + emptyCodes)
+    gpu.layoutLongRange(
+        farRadius = 8,
+        epochs = 60,
+        minSim = 0.12,
+        lambdaStart = 0.46,
+        lambdaEnd   = 0.74,
+        eta = 10.0,
+        maxBatchFrac = 0.35
+    )
+
+    gpu.dispose()
+
+    println("GPU Layout finished!")
+
+    exitProcess(0)
+
+    // CPU processing
+
     val layout = DampLayout2D(
         angleCodes = codes + emptyCodes,
         randomizeStart = true,
         seed = 42
     )
 
-    val posAfterLong = layout.layoutLongRange(
+    layout.layoutLongRange(
         farRadius = 20,
         epochs = 100,
         minSim = 0.00,
@@ -42,7 +67,7 @@ fun main() {
     )
 
 
-    println("Done! Total swaps: ${layout.swapsLog.joinToString(",")}")
+    println("CPU Layout finished! Total swaps: ${layout.swapsLog.joinToString(",")}")
 
 
 
