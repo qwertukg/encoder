@@ -3,6 +3,10 @@ package gpu
 import org.lwjgl.glfw.GLFW
 import org.lwjgl.opengl.GL43C.*
 import org.lwjgl.system.MemoryStack
+import org.lwjgl.system.MemoryUtil.memAlloc
+import org.lwjgl.system.MemoryUtil.memAllocFloat
+import org.lwjgl.system.MemoryUtil.memAllocInt
+import org.lwjgl.system.MemoryUtil.memFree
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.ceil
@@ -167,36 +171,35 @@ class GpuDamlLayout2D_GL430(
         ssboPairs = glGenBuffers()
     }
 
+    // IntArray
     private fun uploadSSBO(buffer: Int, data: IntArray) {
-        MemoryStack.stackPush().use { st ->
-            val bb = st.malloc(data.size * 4).asIntBuffer()
-            bb.put(data).flip()
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer)
-            glBufferData(GL_SHADER_STORAGE_BUFFER, bb, GL_DYNAMIC_DRAW)
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
-        }
+        val bb = memAllocInt(data.size)
+        bb.put(data).flip()
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, bb, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+        memFree(bb)
     }
 
+    // FloatArray
     private fun uploadSSBO(buffer: Int, data: FloatArray) {
-        MemoryStack.stackPush().use { st ->
-            val fb = st.mallocFloat(data.size)
-            fb.put(data).flip()
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer)
-            glBufferData(GL_SHADER_STORAGE_BUFFER, fb, GL_DYNAMIC_DRAW)
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
-        }
+        val fb = memAllocFloat(data.size)
+        fb.put(data).flip()
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, fb, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+        memFree(fb)
     }
 
+    // UIntArray
     private fun uploadSSBO(buffer: Int, data: UIntArray) {
-        MemoryStack.stackPush().use { st ->
-            val bb = st.malloc(data.size * 4)
-            val ib = bb.asIntBuffer()
-            data.forEach { ib.put(it.toInt()) }
-            ib.flip()
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer)
-            glBufferData(GL_SHADER_STORAGE_BUFFER, bb, GL_STATIC_DRAW)
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
-        }
+        val ib = memAllocInt(data.size)
+        data.forEach { ib.put(it.toInt()) }
+        ib.flip()
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer)
+        glBufferData(GL_SHADER_STORAGE_BUFFER, ib, GL_STATIC_DRAW)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
+        memFree(ib)
     }
 
     private fun downloadGrid(): IntArray {
@@ -209,7 +212,7 @@ class GpuDamlLayout2D_GL430(
         val size = glGetBufferParameteri(GL_SHADER_STORAGE_BUFFER, GL_BUFFER_SIZE)
         require(size >= count * 4) { "SSBO too small: size=$size, need=${count*4}" }
 
-        val tmp = ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder())
+        val tmp = memAlloc(size).order(ByteOrder.nativeOrder())
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, tmp)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
@@ -217,6 +220,7 @@ class GpuDamlLayout2D_GL430(
         val ib = tmp.asIntBuffer()
         val out = IntArray(count)
         ib.get(out, 0, count.coerceAtMost(ib.remaining()))
+        memFree(tmp)
         return out
     }
 
@@ -225,7 +229,7 @@ class GpuDamlLayout2D_GL430(
         val size = glGetBufferParameteri(GL_SHADER_STORAGE_BUFFER, GL_BUFFER_SIZE)
         require(size >= count * 4) { "SSBO too small: size=$size, need=${count*4}" }
 
-        val tmp = ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder())
+        val tmp = memAlloc(size).order(ByteOrder.nativeOrder())
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, tmp)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
 
@@ -233,6 +237,7 @@ class GpuDamlLayout2D_GL430(
         val fb = tmp.asFloatBuffer()
         val out = FloatArray(count)
         fb.get(out, 0, count.coerceAtMost(fb.remaining()))
+        memFree(tmp)
         return out
     }
 

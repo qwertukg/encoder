@@ -2,7 +2,9 @@ import gpu.GpuDamlLayout2D_GL430
 import io.ktor.utils.io.InternalAPI
 import org.lwjgl.glfw.GLFW
 import viz.showAnglesGrid
+import java.lang.Math.toRadians
 import kotlin.math.PI
+import kotlin.math.floor
 import kotlin.system.exitProcess
 import kotlin.time.measureTime
 
@@ -22,12 +24,13 @@ fun main() {
     )
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
-    (0..359 step 1).forEach {
-        val angleRadians = it * PI / 180.0
-        val code = encoder.encode(angleRadians)
-        codes.add(it.toDouble() to code)
-        println("$it:" + code.joinToString("", "[", "]"))
-//        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
+    val stepDeg = 1.0
+    val steps = (360.0 / stepDeg).toInt()
+    repeat(steps) { i ->
+        val angleDeg = i * stepDeg
+        val angleRad = toRadians(angleDeg)
+        val code = encoder.encode(angleRad)
+        codes += angleDeg to code
     }
 
     val emptyCodes: List<Pair<Double?, IntArray>> = (0..100).map { null to IntArray(256) }
@@ -51,7 +54,6 @@ fun main() {
 
 
     // CPU processing
-
     val cpuTime = measureTime {
         val layout = DampLayout2D(angleCodes = codes + emptyCodes)
         val outCPU = layout.layoutLongRange(
