@@ -1,6 +1,7 @@
 package viz
 
 import java.util.Locale
+import javax.swing.JFrame
 import javax.swing.JScrollPane
 import javax.swing.SwingUtilities
 import kotlin.math.ceil
@@ -21,6 +22,7 @@ fun showAnglesGrid(
     decimals: Int = 1,
     title: String = "Angle matrix"
 ) {
+    val frame = JFrame("Angle matrix")
     require(angles.isNotEmpty()) { "angles must not be empty" }
 
     // квадратная матрица S×S, заполняем по строкам

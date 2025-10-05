@@ -2,6 +2,8 @@ import gpu.GpuDamlLayout2D_GL430
 import io.ktor.utils.io.InternalAPI
 import org.lwjgl.glfw.GLFW
 import viz.showAnglesGrid
+import viz.showAnglesGridIso
+import viz.showIsometricLayout
 import java.lang.Math.toRadians
 import kotlin.math.PI
 import kotlin.math.floor
@@ -24,20 +26,26 @@ fun main() {
     )
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
-    val stepDeg = 1.0
-    val steps = (360.0 / stepDeg).toInt()
-    repeat(steps) { i ->
-        val angleDeg = i * stepDeg
+    val s = 1.0
+    var i = s
+    while (i < 360.0) {
+        i += s
+        val angleDeg = i
         val angleRad = toRadians(angleDeg)
         val code = encoder.encode(angleRad)
+        println(code.joinToString(""))
         codes += angleDeg to code
     }
 
-    val emptyCodes: List<Pair<Double?, IntArray>> = (0..100).map { null to IntArray(256) }
+    val emptyCodes: List<Pair<Double?, IntArray>> = (0..100).map { null to IntArray(encoder.initialCodeSizeInBits) }
+    val c = (codes + emptyCodes)//.shuffled()
 
     // GPU processing
     val gpuTime = measureTime {
-        val gpuLayout = GpuDamlLayout2D_GL430(codes + emptyCodes)
+        showAnglesGrid(c.map { it.first })
+//        showAnglesGridIso(c.map { it.first })
+
+        val gpuLayout = GpuDamlLayout2D_GL430(c)
         val outGPU =  gpuLayout.layoutLongRange(
             farRadius = 20,
             epochs = 100,
@@ -49,26 +57,27 @@ fun main() {
         )
         gpuLayout.dispose()
         showAnglesGrid(outGPU.map { it.first })
+//        showAnglesGridIso(outGPU.map { it.first })
     }
     println("GPU Layout finished! Total time: $gpuTime")
 
 
     // CPU processing
-    val cpuTime = measureTime {
-        val layout = DampLayout2D(angleCodes = codes + emptyCodes)
-        val outCPU = layout.layoutLongRange(
-            farRadius = 20,
-            epochs = 100,
-            minSim = 0.00,
-            lambdaStart = 0.30,
-            lambdaEnd = 0.90,
-            eta = 0.0,
-            maxBatchFrac = 0.30,
-            log = false
-        )
-        showAnglesGrid(outCPU.map { it.first })
-    }
-    println("CPU Layout finished! Total time: $cpuTime")
+//    val cpuTime = measureTime {
+//        val layout = DampLayout2D(angleCodes = codes + emptyCodes)
+//        val outCPU = layout.layoutLongRange(
+//            farRadius = 20,
+//            epochs = 100,
+//            minSim = 0.00,
+//            lambdaStart = 0.30,
+//            lambdaEnd = 0.90,
+//            eta = 0.0,
+//            maxBatchFrac = 0.30,
+//            log = false
+//        )
+//        showAnglesGrid(outCPU.map { it.first })
+//    }
+//    println("CPU Layout finished! Total time: $cpuTime")
 
 
 

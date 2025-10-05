@@ -1,4 +1,3 @@
-import viz.showLayout
 import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.exp
@@ -89,7 +88,7 @@ class DampLayout2D(
         if (n == 0) return emptyList()
         if (log) {
             val csv = logGridState(epoch = -1, tag = "start")
-            showLayout(csv)
+//            showLayout(csv)
         }
         var swapCount = 0
         repeat(epochs.coerceAtLeast(0)) { e ->
@@ -107,7 +106,7 @@ class DampLayout2D(
             if (log) {
                 println("long-range epoch=${e + 1}  lambda=%.3f  duration=%s".format(lam, dt))
                 val csv = logGridState(epoch = e, tag = "long")
-                showLayout(csv)
+//                showLayout(csv)
             }
         }
         return buildCoordinateMap()

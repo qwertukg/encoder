@@ -23,7 +23,7 @@ import kotlin.math.PI
  */
 class SlidingWindowAngleEncoder(
     /** Конфигурации слоёв (см. data class Layer ниже). */
-    initialLayers: List<Layer> = listOf(
+    val initialLayers: List<Layer> = listOf(
         Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
         Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
         Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
@@ -32,7 +32,7 @@ class SlidingWindowAngleEncoder(
         Layer(arcLengthDegrees = 2.8125,  detectorCount = 128,  overlapFraction = 0.4),
     ),
     /** Размер результирующего кода в битах. */
-    initialCodeSizeInBits: Int = 256
+    val initialCodeSizeInBits: Int = 256
 ) {
     /**
      * Параметры одного слоя детекторов.
@@ -192,14 +192,3 @@ private fun validateCodeSize(codeSizeInBits: Int, layers: List<SlidingWindowAngl
         "Размер кодового слова ($codeSizeInBits) меньше числа детекторов ($detectorBudget)"
     }
 }
-
-/* -----------------------------
-   Пример использования (опционально):
-
-fun viz.main() {
-    val encoder = SlidingWindowAngleEncoder()
-    val angleRadians = 200.0 * PI / 180.0
-    val code = encoder.encode(angleRadians)
-    println(code.joinToString(""))
-}
------------------------------ */

@@ -5,21 +5,13 @@ import javax.swing.*
 import java.io.File
 import kotlin.math.*
 
-private fun readAnglesCsv(path: String): List<List<String>> =
-    File(path).readLines().filter { it.isNotBlank() }
-        .map { it.split(',').map { s -> s.trim() } }
-
-private fun readAnglesString(anglesString: String): List<List<String>> =
-    anglesString.split("\n").filter { it.isNotBlank() }
-        .map { it.split(',').map { s -> s.trim() } }
-
 class ArrowGrid(
     private val ang: List<List<String>>,
     private val cell: Int = 32
 ) : JPanel() {
     init {
         preferredSize = Dimension(ang.first().size * cell, ang.size * cell)
-        background = Color.WHITE
+        background = Color.BLACK
     }
 
     override fun paintComponent(g: Graphics) {
@@ -28,9 +20,9 @@ class ArrowGrid(
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
         // сетка (светло-серая)
-        g2.color = Color(230, 230, 230)
-        for (r in 0..ang.size) g2.drawLine(0, r * cell, ang[0].size * cell, r * cell)
-        for (c in 0..ang[0].size) g2.drawLine(c * cell, 0, c * cell, ang.size * cell)
+//        g2.color = Color(230, 230, 230)
+//        for (r in 0..ang.size) g2.drawLine(0, r * cell, ang[0].size * cell, r * cell)
+//        for (c in 0..ang[0].size) g2.drawLine(c * cell, 0, c * cell, ang.size * cell)
 
         val len = cell * 0.38
         val head = cell * 0.18
@@ -46,7 +38,8 @@ class ArrowGrid(
             val x2 = cx + len * cos(a)
             val y2 = cy - len * sin(a)               // инверсия Y для экрана
 
-            g2.color = Color.BLACK
+            val angleDeg = angle.toDouble()
+            g2.color = colorForAngle(angleDeg)
             g2.drawLine(cx.toInt(), cy.toInt(), x2.toInt(), y2.toInt())
 
             // наконечник стрелки
@@ -59,18 +52,13 @@ class ArrowGrid(
             }
         }
     }
-}
 
-val frame = JFrame("Angle matrix")
-
-fun showLayout(anglesString: String) {
-    val angles = readAnglesString(anglesString)
-//    val angles = readAnglesCsv("src/main/kotlin/viz/data.csv")
-    SwingUtilities.invokeLater {
-        frame.apply {
-            defaultCloseOperation = JFrame.EXIT_ON_CLOSE
-            contentPane = JScrollPane(ArrowGrid(angles))
-            pack(); setLocationRelativeTo(null); isVisible = true
-        }
+    // Подбор цвета по углу: HSV (HSB в Java)
+    private fun colorForAngle(deg: Double, s: Float = 0.9f, v: Float = 0.95f): Color {
+        // нормализуем в [0, 360)
+        val d = ((deg % 360.0) + 360.0) % 360.0
+        val hue = (d / 360.0).toFloat()          // [0,1)
+        return Color.getHSBColor(hue, s, v)
     }
 }
+
