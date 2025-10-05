@@ -1,44 +1,37 @@
 import gpu.GpuDamlLayout2D_GL430
-import io.ktor.utils.io.InternalAPI
-import org.lwjgl.glfw.GLFW
 import viz.showAnglesGrid
-import viz.showAnglesGridIso
-import viz.showIsometricLayout
 import java.lang.Math.toRadians
-import kotlin.math.PI
-import kotlin.math.floor
-import kotlin.system.exitProcess
 import kotlin.time.measureTime
 
 fun main() {
     println("os.arch=" + System.getProperty("os.arch"))
 
-    val encoder = SlidingWindowAngleEncoder(
-        initialLayers = listOf(
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 2.8125, detectorCount = 128, overlapFraction = 0.4),
-        ),
-        initialCodeSizeInBits = 256
-    )
+    val encoder = SlidingWindowAngleEncoder(initialCodeSizeInBits = 512)
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
-    val s = 1.0
-    var i = s
-    while (i < 360.0) {
-        i += s
-        val angleDeg = i
-        val angleRad = toRadians(angleDeg)
-        val code = encoder.encode(angleRad)
-        println(code.joinToString(""))
-        codes += angleDeg to code
+    var a = 0.0
+    while (a < 360.0) {
+        a += 20.0
+
+        var x = 0.0
+        while (x <= 5.0) {
+            x += 1.0
+
+            var y = 0.0
+            while (y <= 5.0) {
+                y += 1.0
+
+                val angleRad = toRadians(a)
+                val code = encoder.encode(angleRad, x, y)
+                println(code.joinToString(""))
+                codes += a to code
+            }
+        }
+
     }
 
-    val emptyCodes: List<Pair<Double?, IntArray>> = (0..100).map { null to IntArray(encoder.initialCodeSizeInBits) }
-    val c = (codes + emptyCodes)//.shuffled()
+    val emptyCodes: List<Pair<Double?, IntArray>> = (0..200).map { null to IntArray(encoder.initialCodeSizeInBits) }
+    val c = (codes + emptyCodes).shuffled()
 
     // GPU processing
     val gpuTime = measureTime {
@@ -48,11 +41,11 @@ fun main() {
         val gpuLayout = GpuDamlLayout2D_GL430(c)
         val outGPU =  gpuLayout.layoutLongRange(
             farRadius = 20,
-            epochs = 100,
-            minSim = 0.00,
+            epochs = 50,
+            minSim = 0.0,
             lambdaStart = 0.30,
             lambdaEnd = 0.90,
-            eta = 0.0,
+            eta = 0.1,
             maxBatchFrac = 0.30,
         )
         gpuLayout.dispose()

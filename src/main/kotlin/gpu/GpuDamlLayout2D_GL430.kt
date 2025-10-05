@@ -52,8 +52,8 @@ class GpuDamlLayout2D_GL430(
         GL.createCapabilities()
 
         // Включаем отладку GL
-        Configuration.DEBUG.set(true)
-        GLUtil.setupDebugMessageCallback(System.err)
+//        Configuration.DEBUG.set(true)
+//        GLUtil.setupDebugMessageCallback(System.err)
 
         // начальная раскладка: первые n ячеек — 0..n-1 в случайном или прямом порядке
         val order = (0 until n).toMutableList().also {
