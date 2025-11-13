@@ -21,6 +21,7 @@ val natives = when {
 }
 
 dependencies {
+    implementation("org.jfree:jfreechart:1.5.4")
 
     implementation("org.lwjgl:lwjgl:$lwjglVersion")
     implementation("org.lwjgl:lwjgl-opengl:$lwjglVersion")
@@ -38,6 +39,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-html-jvm:0.11.0")
     implementation("ch.qos.logback:logback-classic:1.5.6")
     testImplementation(kotlin("test"))
+    implementation("org.junit.jupiter:junit-jupiter:5.11.0")
 }
 
 kotlin {

@@ -2,6 +2,7 @@ import SlidingWindowAngleEncoder.Layer
 import SlidingWindowAngleEncoder.LinearLayer
 import gpu.GpuDamlLayout2D_GL430
 import viz.showAnglesGrid
+import viz.showAnglesGridIso
 import java.lang.Math.toRadians
 import kotlin.collections.List
 import kotlin.time.measureTime
@@ -12,36 +13,35 @@ fun main() {
     val encoder = SlidingWindowAngleEncoder(
         // ---- ANGLE конфигурация ----
         listOf(
-            Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
-            Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
-            Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
-            Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
-            Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
-            Layer(arcLengthDegrees = 2.8125, detectorCount = 128, overlapFraction = 0.4),
+            Layer(120.0),
+            Layer(60.0),
+            Layer(30.0),
+            Layer(15.0),
+            Layer(5.0),
         ),
         // ---- X конфигурации ----
         listOf(
-            LinearLayer(baseWidthUnits = 0.25, detectorCount = 16, overlapFraction = 0.5, domainMin = -1.0, domainMax = 1.0),
-            LinearLayer(baseWidthUnits = 0.10, detectorCount = 32, overlapFraction = 0.5, domainMin = -1.0, domainMax = 1.0)
+            LinearLayer(baseWidthUnits = 0.25, overlapFraction = 0.4, domainMin = -2.0, domainMax = 2.0),
+            LinearLayer(baseWidthUnits = 0.10, overlapFraction = 0.4, domainMin = -2.0, domainMax = 2.0)
         ),
         // ---- Y конфигурации ----
         listOf(
-            LinearLayer(baseWidthUnits = 0.25, detectorCount = 16, overlapFraction = 0.5, domainMin = -2.0, domainMax = 2.0),
-            LinearLayer(baseWidthUnits = 0.10, detectorCount = 32, overlapFraction = 0.5, domainMin = -2.0, domainMax = 2.0)
+            LinearLayer(baseWidthUnits = 0.25, overlapFraction = 0.4, domainMin = -2.0, domainMax = 2.0),
+            LinearLayer(baseWidthUnits = 0.10, overlapFraction = 0.4, domainMin = -2.0, domainMax = 2.0)
         ),
-        512
+//        512
     )
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
     var a = 0.0
-    while (a < 360.0) {
+    while (a < 100.0) {
         a += 1.0
 
-        var x = 0.0
-        while (x <= 0.0) {
+        var x = -1.0
+        while (x <= 1.0) {
             x += 1.0
 
-            var y = 0.0
+            var y = -1.0
             while (y <= 1.0) {
                 y += 1.0
 
@@ -54,30 +54,12 @@ fun main() {
 
     }
 
-    val emptyCodes: List<Pair<Double?, IntArray>> = (0..300).map { null to IntArray(encoder.initialCodeSizeInBits) }
-    val c = (codes + emptyCodes).shuffled()
 
-    // GPU processing
-    val gpuTime = measureTime {
-        showAnglesGrid(c.map { it.first })
-//        showAnglesGridIso(c.map { it.first })
 
-        val gpuLayout = GpuDamlLayout2D_GL430(c)
-        val outGPU =  gpuLayout.layoutLongRange(
-            farRadius = 20,
-            epochs = 100,
-            minSim = 0.0,
-            lambdaStart = 0.30,
-            lambdaEnd = 0.90,
-            eta = 0.0,
-            maxBatchFrac = 0.30,
-        )
-        gpuLayout.dispose()
-        showAnglesGrid(outGPU.map { it.first })
-//        showAnglesGridIso(outGPU.map { it.first })
-    }
-    println("GPU Layout finished! Total time: $gpuTime")
+    val matrix = showAngleCodesCorrelationHeatmap(codes)
+    showSimilarityCurve(matrix, 0.0)
 
+    val emptyCodes: List<Pair<Double?, IntArray>> = (0..300).map { null to IntArray(encoder.codeSizeInBits) }
 
     // CPU processing
 //    val cpuTime = measureTime {
@@ -95,6 +77,31 @@ fun main() {
 //        showAnglesGrid(outCPU.map { it.first })
 //    }
 //    println("CPU Layout finished! Total time: $cpuTime")
+
+    // GPU processing
+//    val c = (codes + emptyCodes).shuffled()
+//    val gpuTime = measureTime {
+//        showAnglesGrid(c.map { it.first })
+//        showAnglesGridIso(c.map { it.first })
+//
+//        val gpuLayout = GpuDamlLayout2D_GL430(c)
+//        val outGPU =  gpuLayout.layoutLongRange(
+//            farRadius = 20,
+//            epochs = 100,
+//            minSim = 0.0,
+//            lambdaStart = 0.30,
+//            lambdaEnd = 0.90,
+//            eta = 0.0,
+//            maxBatchFrac = 0.30,
+//        )
+//        gpuLayout.dispose()
+//        showAnglesGrid(outGPU.map { it.first })
+//        showAnglesGridIso(outGPU.map { it.first })
+//    }
+//    println("GPU Layout finished! Total time: $gpuTime")
+
+
+
 
 
 

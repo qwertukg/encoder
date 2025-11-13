@@ -1,6 +1,7 @@
 import kotlin.jvm.Volatile
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * SlidingWindowAngleEncoder — кодирует угол + ОБЯЗАТЕЛЬНЫЕ признаки x и y
@@ -10,52 +11,56 @@ import kotlin.math.abs
  */
 class SlidingWindowAngleEncoder(
     // ---- ANGLE конфигурация ----
-    val initialLayers: List<Layer> = listOf(
-        Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 2.8125, detectorCount = 128, overlapFraction = 0.4),
+    val layers: List<Layer> = listOf(
+        Layer(arcLengthDegrees = 90.0,   overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 45.0,   overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 22.5,   overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 11.25,  overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 5.625,  overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 2.8125, overlapFraction = 0.4, offsetDegrees = 0.0),
     ),
 
     // ---- X/Y конфигурации (теперь с ДЕФОЛТАМИ) ----
-    val initialXLayers: List<LinearLayer> = listOf(
-        LinearLayer(baseWidthUnits = 0.25, detectorCount = 16, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0),
-        LinearLayer(baseWidthUnits = 0.10, detectorCount = 32, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0)
+    val xLayers: List<LinearLayer> = listOf(
+        LinearLayer(baseWidthUnits = 0.25, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0),
+        LinearLayer(baseWidthUnits = 0.10, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0)
     ),
-    val initialYLayers: List<LinearLayer> = listOf(
-        LinearLayer(baseWidthUnits = 0.25, detectorCount = 16, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0),
-        LinearLayer(baseWidthUnits = 0.10, detectorCount = 32, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0)
+    val yLayers: List<LinearLayer> = listOf(
+        LinearLayer(baseWidthUnits = 0.25, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0),
+        LinearLayer(baseWidthUnits = 0.10, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0)
     ),
 
     /** Размер кода: по умолчанию суммарное число детекторов ANGLE+X+Y. */
-    val initialCodeSizeInBits: Int =
-        initialLayers.sumOf { it.detectorCount } +
-                initialXLayers.sumOf { it.detectorCount } +
-                initialYLayers.sumOf { it.detectorCount }
+    val codeSizeInBits: Int =
+        layers.sumOf { it.detectorCount } +
+                xLayers.sumOf { it.detectorCount } +
+                yLayers.sumOf { it.detectorCount }
 ) {
     /** Угловой слой (периодический). */
-    data class Layer(val arcLengthDegrees: Double, val detectorCount: Int, val overlapFraction: Double)
+    data class Layer(
+        val arcLengthDegrees: Double,
+        val offsetDegrees: Double = 0.0,
+        val overlapFraction: Double = 0.4
+    ) {
+        // Число детекторов автоматически: 360° / длину окна
+        val detectorCount: Int = (360.0 / arcLengthDegrees).roundToInt()
+    }
 
     /** Линейный слой (непериодический). */
     data class LinearLayer(
         val baseWidthUnits: Double,
-        val detectorCount: Int,
         val overlapFraction: Double,
         val domainMin: Double,
         val domainMax: Double
-    )
+    ) {
+        // Число детекторов автоматически из длины домена
+        val detectorCount: Int =
+            ((domainMax - domainMin) / baseWidthUnits).roundToInt().coerceAtLeast(1)
+    }
 
     // --------- константы ---------
     val twoPi: Double = 2.0 * PI
     private val degreesToRadians: Double = PI / 180.0
-
-    // --------- текущая конфигурация ---------
-    @Volatile var layers: List<Layer> = initialLayers.toList();         private set
-    @Volatile var xLayers: List<LinearLayer> = initialXLayers.toList(); private set
-    @Volatile var yLayers: List<LinearLayer> = initialYLayers.toList(); private set
-    @Volatile var codeSizeInBits: Int = initialCodeSizeInBits;          private set
 
     /** Последний код (для отладки). */
     var lastEncodedCode: IntArray = IntArray(0); private set
@@ -88,8 +93,9 @@ class SlidingWindowAngleEncoder(
                 val half = win / 2.0
                 val step = layer.arcLengthDegrees * degreesToRadians
                 val phase = (idx.toDouble() / layerCount) * step
+                val offsetRad = layer.offsetDegrees * degreesToRadians
                 for (d in 0 until layer.detectorCount) {
-                    val center = d * step + phase
+                    val center = d * step + phase + offsetRad
                     val sRaw = center - half
                     val eRaw = center + half
                     var s = sRaw % twoPi; if (s < 0.0) s += twoPi
@@ -110,43 +116,6 @@ class SlidingWindowAngleEncoder(
 
         lastEncodedCode = out
         return out
-    }
-
-    /** Переконфигурировать ANGLE-слои. */
-    fun reconfigure(newLayers: List<Layer>, requestedCodeSizeInBits: Int? = null) {
-        validateAngleLayers(newLayers)
-        val totalNeeded = totalDetectors(newLayers, xLayers, yLayers)
-        val newSize = requestedCodeSizeInBits ?: maxOf(codeSizeInBits, totalNeeded)
-        validateCodeSize(newSize, newLayers, xLayers, yLayers)
-        layers = newLayers.toList()
-        codeSizeInBits = newSize
-        lastEncodedCode = IntArray(0)
-    }
-
-    /** Переконфигурировать X/Y (они ОБЯЗАТЕЛЬНЫ — списки не могут быть пустыми). */
-    fun reconfigureXY(newXLayers: List<LinearLayer>, newYLayers: List<LinearLayer>, requestedCodeSizeInBits: Int? = null) {
-        validateLinearLayersNonEmpty(newXLayers, "X")
-        validateLinearLayersNonEmpty(newYLayers, "Y")
-        val totalNeeded = totalDetectors(layers, newXLayers, newYLayers)
-        val newSize = requestedCodeSizeInBits ?: maxOf(codeSizeInBits, totalNeeded)
-        validateCodeSize(newSize, layers, newXLayers, newYLayers)
-        xLayers = newXLayers.toList()
-        yLayers = newYLayers.toList()
-        codeSizeInBits = newSize
-        lastEncodedCode = IntArray(0)
-    }
-
-    /** Сэмплинг угла по кругу с фиксированными x,y (по умолчанию 0.0). */
-    fun sampleFullCircle(stepDegrees: Double = 1.0, xConst: Double = 0.0, yConst: Double = 0.0)
-            : List<Pair<Double, IntArray>> {
-        require(stepDegrees > 0.0) { "Шаг дискретизации должен быть положительным" }
-        val steps = (360.0 / stepDegrees).toInt()
-        require(abs(steps * stepDegrees - 360.0) < 1e-6) { "Шаг дискретизации должен делить круг без остатка" }
-        return (0 until steps).map { idx ->
-            val angleDeg = idx * stepDegrees
-            val angleRad = angleDeg * PI / 180.0
-            angleRad to encode(angleRad, xConst, yConst).copyOf()
-        }
     }
 
     // ----------------- внутренние утилиты -----------------
