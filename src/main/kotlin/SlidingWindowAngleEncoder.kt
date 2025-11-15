@@ -1,6 +1,4 @@
-import kotlin.jvm.Volatile
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -66,9 +64,9 @@ class SlidingWindowAngleEncoder(
     var lastEncodedCode: IntArray = IntArray(0); private set
 
     init {
-        validateAngleLayers(layers)
+//        validateAngleLayers(layers)
         validateLinearLayersNonEmpty(xLayers, "X")
-        validateLinearLayersNonEmpty(yLayers, "Y")
+//        validateLinearLayersNonEmpty(yLayers, "Y")
         validateCodeSize(codeSizeInBits, layers, xLayers, yLayers)
     }
 
