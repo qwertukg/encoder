@@ -64,8 +64,8 @@ class SlidingWindowAngleEncoder(
     var lastEncodedCode: IntArray = IntArray(0); private set
 
     init {
-//        validateAngleLayers(layers)
-        validateLinearLayersNonEmpty(xLayers, "X")
+        validateAngleLayers(layers)
+//        validateLinearLayersNonEmpty(xLayers, "X")
 //        validateLinearLayersNonEmpty(yLayers, "Y")
         validateCodeSize(codeSizeInBits, layers, xLayers, yLayers)
     }

@@ -18,7 +18,7 @@ import kotlin.math.sqrt
  */
 fun showAnglesGrid(
     angles: List<Double?>,
-    cell: Int = 32,
+    cell: Int = 2,
     decimals: Int = 1,
     title: String = "Angle matrix"
 ) {
@@ -38,7 +38,7 @@ fun showAnglesGrid(
 
     SwingUtilities.invokeLater {
         frame.title = title
-        frame.contentPane = JScrollPane(ArrowGrid(grid, cell))
+        frame.contentPane = JScrollPane(DotGrid(grid, cell))
         frame.pack()
         frame.setLocationRelativeTo(null)
         frame.isVisible = true
