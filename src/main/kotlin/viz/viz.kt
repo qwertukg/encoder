@@ -69,8 +69,44 @@ fun showLayout(anglesString: String) {
     SwingUtilities.invokeLater {
         frame.apply {
             defaultCloseOperation = JFrame.EXIT_ON_CLOSE
-            contentPane = JScrollPane(ArrowGrid(angles))
+            contentPane = JScrollPane(DotGrid(angles, 5))
             pack(); setLocationRelativeTo(null); isVisible = true
         }
+    }
+}
+
+class DotGrid(
+    private val ang: List<List<String>>,
+    private val cell: Int
+) : JPanel() {
+    init {
+        preferredSize = Dimension(ang.first().size * cell, ang.size * cell)
+        background = Color.BLACK
+    }
+
+    override fun paintComponent(g: Graphics) {
+        super.paintComponent(g)
+        val g2 = g as Graphics2D
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+
+        for (r in ang.indices) {
+            for (c in ang[r].indices) {
+                val angle = ang[r][c]
+                if (angle.isEmpty() || angle == "n") continue
+
+                val angleDeg = angle.toDouble()
+                val cx = c * cell + cell / 2.0
+                val cy = r * cell + cell / 2.0
+
+                g2.color = colorForAngle(angleDeg)
+                g2.fillRect(cx.toInt(), cy.toInt(), cell, cell)
+            }
+        }
+    }
+
+    private fun colorForAngle(deg: Double, s: Float = 0.9f, v: Float = 0.95f): Color {
+        val d = ((deg % 360.0) + 360.0) % 360.0
+        val hue = (d / 360.0).toFloat()
+        return Color.getHSBColor(hue, s, v)
     }
 }
