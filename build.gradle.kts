@@ -13,6 +13,7 @@ repositories {
 val ktorVersion = "3.0.1"
 
 dependencies {
+    implementation("org.jfree:jfreechart:1.5.4")
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-netty:$ktorVersion")
     implementation("io.ktor:ktor-server-html-builder:$ktorVersion")
@@ -32,5 +33,6 @@ tasks.test {
 }
 
 application {
+    applicationDefaultJvmArgs = listOf("-Xms2048m", "-Xmx8g")
     mainClass.set("MainKt")
 }

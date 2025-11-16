@@ -1,55 +1,95 @@
 import kotlin.math.PI
+import SlidingWindowAngleEncoder.Layer
+import SlidingWindowAngleEncoder.LinearLayer
+import java.lang.Math.toRadians
+import kotlin.time.measureTime
 
 fun main() {
+    println("os.arch=" + System.getProperty("os.arch"))
+
+    val a0 = 0.0
+    val aN = 360.0
+    val x0 = 0.0
+    val xN = 1.0
+    val y0 = 0.0
+    val yN = 1.0
+
     val encoder = SlidingWindowAngleEncoder(
-        initialLayers = listOf(
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
-            SlidingWindowAngleEncoder.Layer(arcLengthDegrees = 2.8125, detectorCount = 128, overlapFraction = 0.4),
+        // ---- ANGLE конфигурация ----
+        listOf(
+            Layer(120.0),
+            Layer(60.0),
+            Layer(30.0),
+            Layer(15.0),
+            Layer(5.0),
         ),
-        initialCodeSizeInBits = 256
+        // ---- X конфигурации ----
+        listOf(
+//            LinearLayer(baseWidthUnits = 1.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+//            LinearLayer(baseWidthUnits = 2.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+//            LinearLayer(baseWidthUnits = 4.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+//            LinearLayer(baseWidthUnits = 8.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+//            LinearLayer(baseWidthUnits = 16.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+//            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+        ),
+        // ---- Y конфигурации ----
+        listOf(
+//            LinearLayer(baseWidthUnits = 0.5, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+//            LinearLayer(baseWidthUnits = 1.5, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+//            LinearLayer(baseWidthUnits = 2.5, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+        ),
+        256,
+        true,
+
     )
+
 
     val codes = mutableListOf<Pair<Double, IntArray>>()
-    (0..359).forEach {
-        val angleRadians = it * PI / 180.0
-        val code = encoder.encode(angleRadians)
-        codes.add(it.toDouble() to code)
-        println("$it:" + code.joinToString("", "[", "]"))
-//        encoder.drawDetectorsPdf("./detectors.pdf", markAngleRadians = angleRadians)
+    var a = a0
+    while (a < aN) {
+        a += 1.0
+
+        var x = x0
+        while (x < xN) {
+            x += 1.0
+
+            var y = y0
+            while (y < yN) {
+                y += 1.0
+
+                val angleRad = toRadians(a)
+                val code = encoder.encode(angleRad, x, y)
+                println("$a:$x:$y\t" + code.joinToString("", "[", "]"))
+                codes += a to code
+            }
+        }
+
     }
 
-    val layout = DampLayout2D(
-        angleCodes = codes,
-        randomizeStart = true,
-        seed = 42
-    )
 
-    val posAfterLong = layout.layoutLongRange(
-        farRadius = 20,
-        epochs = 100,
-        minSim = 0.00,
-        lambdaStart = 0.10,
-        lambdaEnd = 0.90,
-        eta = 0.0,
-        maxBatchFrac = 0.50,
-        log = true
-    )
+//    val matrix = showAngleCodesCorrelationHeatmap(codes)
+    val matrix = buildCodeCorrelationMatrix(codes)
+    showSimilarityCurve(matrix, 0.0)
 
 
-    println("Done!")
+    val emptyCodes: List<Pair<Double?, IntArray>> = (0..2500).map { null to IntArray(encoder.codeSizeInBits) }
 
+    // CPU processing
+    val cpuTime = measureTime {
+        val c = (codes + emptyCodes).shuffled()
+        val layout = DampLayout2D(angleCodes = codes + emptyCodes)
 
+        val outCPU = layout.layoutLongRange(
+            farRadius = 70,
+            epochs = 100,
+            minSim = 0.00,
+            lambdaStart = 0.30,
+            lambdaEnd = 0.90,
+            eta = 0.0,
+            maxBatchFrac = 0.30,
+            log = true
+        )
+    }
+    println("CPU Layout finished! Total time: $cpuTime")
 
-//    val backgroundCorrelationAnalyzer = BackgroundCorrelationAnalyzer()
-//
-//    embeddedServer(Netty, port = 8080) {
-//        detectorsUiModule(
-//            encoder = encoder,
-//            backgroundAnalyzer = backgroundCorrelationAnalyzer
-//        )
-//    }.start(wait = true)
 }

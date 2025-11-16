@@ -5,40 +5,17 @@ import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.random.Random
-import kotlin.random.nextInt
 import kotlin.time.Duration
 import kotlin.time.measureTime
+import kotlinx.coroutines.*
 
-/**
- * DamlLayout2D — раскладка разрежённых бинарных кодов на 2D решётку.
- *
- * Ключевые идеи, реализованные в этом классе:
- * 1) Long-range раскладка: минимизируем глобальную энергию пар перестановками точек.
- *    Энергия пары (p,q) относительно остальных точек V^+ оценивается как сумма
- *      φ = Σ_{r∈V^+} [ sim(p,r) * dist(p,r) + sim(q,r) * dist(q,r) ].
- *    Для гипотетического свапа p↔q считаем φ_swap аналогично и применяем обмен,
- *    если Δ = φ_swap - φ_current < 0. Для эффективности Δ считаем аналитически:
- *      Δ = Σ_{r∈V^+} (sim(q,r) - sim(p,r)) * (d(p,r) - d(q,r)).
- *    Это позволяет за один проход по r получить обе энергии (без двойного пересчёта).
- *
- * 2) Метрика сходства для разрежённых кодов — Жаккар по единичным битам (не «доля равных битов»),
- *    т.к. последняя завышает сходство из-за доминирования нулей.
- *    Затем применяется пороговая функция τ(x) = x * σ(η(x - λ)), где σ — сигмоида.
- *
- * 3) Стохастика: первую точку выбираем в случайном порядке; вторую — внутри радиуса.
- *    Это уменьшает зависимость от порядка обхода и лучше «разлепляет» карту на ранних стадиях.
- *
- * 4) Батчевые свапы: в каждой эпохе собираем набор выгодных обменов без общих индексов
- *    и применяем их одним коммитом, что снижает артефакты порядка и локальные колебания.
- *
- * 5) Без sqrt: работаем с квадратами расстояний — критерий сравнения сохраняется,
- *    а вычисления быстрее.
- *
- * 6) Опциональная short-range «полировка»: локальная минимизация энергии в малом радиусе,
- *    чтобы пригладить мелкие огрехи топологии, не ломая глобальную структуру.
- */
+// Тюнинговые константы
+private const val MAX_CAND_PER_FIRST = 16       // ограничение числа кандидатов per firstIndex
+private const val MAX_R_PER_DELTA     = 1000    // ограничение числа r в energyDelta
+private const val ENERGY_WORKERS_FRACTION = 0.5 // доля ядер под energyDelta-параллелизм
+
 class DampLayout2D(
-    private val angleCodes: List<Pair<Double, IntArray>>,
+    private val angleCodes: List<Pair<Double?, IntArray>>,
     randomizeStart: Boolean = true,
     seed: Int = 42,
 ) {
@@ -46,13 +23,62 @@ class DampLayout2D(
     private val n = angleCodes.size
     private val gridSize: Int = ceil(sqrt(n.toDouble())).toInt()
 
-    // Решётка хранит индексы кодов или null (если ячейка пустая)
-    private val grid: MutableList<Int?> = MutableList(gridSize * gridSize) { null }
+    // Решётка хранит индексы кодов или -1 (если ячейка пустая)
+    private val grid: IntArray = IntArray(gridSize * gridSize) { -1 }
+
+    // Координаты индексов решётки
+    private val ys: IntArray = IntArray(grid.size) { it / gridSize }
+    private val xs: IntArray = IntArray(grid.size) { it % gridSize }
+
+    // длина кодового слова в битах
+    private val codeBitLength: Int = angleCodes.maxOfOrNull { it.second.size } ?: 0
+    private val wordsPerCode: Int =
+        if (codeBitLength == 0) 0 else (codeBitLength + 63) / 64
+
+    // bitset-представление кодов: один LongArray на код
+    private val bitCodes: Array<LongArray> = Array(n) { LongArray(wordsPerCode) }
+
+    // Предрасчитанная матрица сходств Жаккара (по единичным битам)
+    private val sim: Array<DoubleArray> = Array(n) { DoubleArray(n) }
+
+    /**
+     * Кеш смещений соседей по радиусу:
+     * radius -> IntArray [dy0, dx0, dy1, dx1, ...].
+     * Это компактно: O(radius^2) на радиус, вместо O(gridSize^2 * radius^2).
+     */
+    private val neighborOffsetsCache: MutableMap<Int, IntArray> = mutableMapOf()
+
+    private data class SwapProposal(val a: Int, val b: Int, val delta: Double)
 
     init {
-        // Инициализация: кладём коды в первые n ячеек (строго слева направо, сверху вниз),
-        // но случайно перемешиваем порядок самих кодов — так пустые клетки остаются только в
-        // конце матрицы, а стартовая конфигурация остаётся стохастической (см. DAML, разд. 5.6).
+        // bitset-представление
+        if (wordsPerCode > 0) {
+            for (idx in 0 until n) {
+                val src = angleCodes[idx].second
+                val dst = bitCodes[idx]
+                var k = 0
+                while (k < src.size) {
+                    if (src[k] == 1) {
+                        val wordIndex = k / 64
+                        val bitIndex  = k % 64
+                        dst[wordIndex] = dst[wordIndex] or (1L shl bitIndex)
+                    }
+                    k++
+                }
+            }
+        }
+
+        // sim-матрица (осторожно: O(n^2) по памяти)
+        for (i in 0 until n) {
+            sim[i][i] = 1.0
+            for (j in i + 1 until n) {
+                val s = if (wordsPerCode == 0) 0.0 else jaccardBit(bitCodes[i], bitCodes[j])
+                sim[i][j] = s
+                sim[j][i] = s
+            }
+        }
+
+        // Инициализация решётки кодами
         val codeOrder = (0 until n).toMutableList()
         if (randomizeStart) codeOrder.shuffle(rng)
         codeOrder.forEachIndexed { idx, codeIndex ->
@@ -62,19 +88,6 @@ class DampLayout2D(
 
     // ======================= ПУБЛИЧНЫЕ API =======================
 
-    /**
-     * Long-range раскладка.
-     *
-     * @param farRadius радиус дальнего поиска в клетках
-     * @param epochs количество эпох (полных обходов)
-     * @param minSim минимальное базовое сходство (Жаккар) для отбора пары (ускоряет)
-     * @param lambdaStart начальное λ в τ-пороге (фильтрует слабые связи)
-     * @param lambdaEnd финальное λ (можно поднять к концу, чтобы «дожать» сильные связи)
-     * @param eta крутизна сигмоиды в τ
-     * @param maxBatchFrac максимум доли точек, участвующих в свапах за эпоху (0..1)
-     * @param log печатать состояние решётки по эпохам
-     * @return список троек (угол, y, x) для исходных кодов
-     */
     fun layoutLongRange(
         farRadius: Int,
         epochs: Int,
@@ -84,25 +97,38 @@ class DampLayout2D(
         eta: Double = 10.0,
         maxBatchFrac: Double = 0.5,
         log: Boolean = true,
-    ): List<Triple<Double, Int, Int>> {
+        // если хочется ускорить: можно сразу задавать localEnergyRadius = farRadius
+        forceLocalEnergyRadius: Int? = null,
+    ): List<Triple<Double?, Int, Int>> {
         if (n == 0) return emptyList()
+
+        ensureNeighbors(farRadius)
+
         if (log) {
             val csv = logGridState(epoch = -1, tag = "start")
             showLayout(csv)
         }
 
         repeat(epochs.coerceAtLeast(0)) { e ->
-            val lam = lerp(lambdaStart, lambdaEnd, if (epochs <= 1) 1.0 else e.toDouble() / (epochs - 1).coerceAtLeast(1))
+            val lam = lerp(
+                lambdaStart,
+                lambdaEnd,
+                if (epochs <= 1) 1.0 else e.toDouble() / (epochs - 1).coerceAtLeast(1)
+            )
+
             val dt: Duration = measureTime {
-                doOneEpoch(
-                    searchRadius = farRadius,
-                    lambda = lam,
-                    eta = eta,
-                    minSim = minSim,
-                    maxBatchFrac = maxBatchFrac,
-                    localEnergyRadius = null, // long-range: считаем энергию по всей решётке
-                )
+                runBlocking {
+                    doOneEpoch(
+                        searchRadius = farRadius,
+                        lambda = lam,
+                        eta = eta,
+                        minSim = minSim,
+                        maxBatchFrac = maxBatchFrac,
+                        localEnergyRadius = forceLocalEnergyRadius, // null = глобально, иначе — локально
+                    )
+                }
             }
+
             if (log) {
                 println("long-range epoch=${e + 1}  lambda=%.3f  duration=%s".format(lam, dt))
                 val csv = logGridState(epoch = e, tag = "long")
@@ -112,250 +138,369 @@ class DampLayout2D(
         return buildCoordinateMap()
     }
 
-    /**
-     * Опциональная short-range «полировка» — локальная минимизация в малом радиусе.
-     * По умолчанию НЕ вызывается; используйте по необходимости после long-range.
-     */
-    fun layoutShortRange(
-        nearRadius: Int,
-        epochs: Int,
-        minSim: Double = 0.0,
-        lambda: Double = 0.70,
-        eta: Double = 10.0,
-        maxBatchFrac: Double = 0.5,
-        log: Boolean = true,
-    ) {
-        if (n == 0) return
-        repeat(epochs.coerceAtLeast(0)) { e ->
-            val dt: Duration = measureTime {
-                doOneEpoch(
-                    searchRadius = nearRadius,
-                    lambda = lambda,
-                    eta = eta,
-                    minSim = minSim,
-                    maxBatchFrac = maxBatchFrac,
-                    localEnergyRadius = nearRadius, // short-range: локальная энергия
-                )
-            }
-            if (log) {
-                println("short-range epoch=${e + 1}  lambda=%.3f  duration=%s".format(lambda, dt))
-                logGridState(epoch = e, tag = "near")
-            }
-        }
-    }
+    // ======================= ОСНОВНАЯ ЭПОХА (ПАРАЛЛЕЛЬНАЯ) =======================
 
-    /** Итоговые координаты (угол, y, x) для исходных кодов. */
-    fun positions(): List<Triple<Double, Int, Int>> = buildCoordinateMap()
-
-    // ======================= ОСНОВНАЯ ЭПОХА =======================
-
-    /**
-     * Один батчевый проход:
-     *  - случайный порядок «первых» позиций
-     *  - поиск лучшего «второго» в радиусе
-     *  - расчёт выгод свапов Δ по аналитической формуле
-     *  - отбор неконфликтующих свапов и атомарное применение батча
-     *
-     * Если localEnergyRadius == null — оцениваем Δ по всей решётке (long-range).
-     * Если localEnergyRadius != null — считаем Δ только по соседям в этом радиусе (short-range).
-     */
-    private fun doOneEpoch(
+    private suspend fun doOneEpoch(
         searchRadius: Int,
         lambda: Double,
         eta: Double,
         minSim: Double,
         maxBatchFrac: Double,
         localEnergyRadius: Int?,
-    ) {
-        val occupied = grid.indices.filter { grid[it] != null }.toMutableList()
+    ) = coroutineScope {
+        val occupied = (0 until n).toMutableList()
         occupied.shuffle(rng)
 
-        val taken = BooleanArray(grid.size) // запрет двойного участия в батче
-        val swaps = ArrayList<Pair<Int, Int>>() // пары индексов ячеек (i, j)
+        if (occupied.isEmpty()) return@coroutineScope
+
         val maxSwaps = (occupied.size * maxBatchFrac).toInt().coerceAtLeast(1)
 
-        for (firstIndex in occupied) {
-            if (swaps.size >= maxSwaps) break
-            if (taken[firstIndex]) continue
-            val iCode = grid[firstIndex] ?: continue
+        val workers = minOf(
+            Runtime.getRuntime().availableProcessors().coerceAtLeast(1),
+            occupied.size
+        )
+        val chunkSize = (occupied.size + workers - 1) / workers
 
-            var bestSecond = -1
-            var bestDelta = 0.0 // Ищем Δ < 0 (уменьшение энергии)
-            val candidates = candidateIndices(firstIndex, searchRadius)
-                .filter { it != firstIndex && !taken[it] && grid[it] != null }
+        val deferred = (0 until workers).map { w ->
+            val from = w * chunkSize
+            if (from >= occupied.size) {
+                async(Dispatchers.Default) { emptyList<SwapProposal>() }
+            } else {
+                val to = minOf(from + chunkSize, occupied.size)
+                async(Dispatchers.Default) {
+                    val local = ArrayList<SwapProposal>()
+                    val rnd = Random(rng.nextInt()) // локальный RNG для потока
+                    for (idx in from until to) {
+                        val firstIndex = occupied[idx]
+                        val iCode = grid[firstIndex]
+                        if (iCode == -1) continue
 
-            for (secondIndex in candidates) {
-                val jCode = grid[secondIndex]!!
-                // Базовый Жаккар как быстрый фильтр (без τ)
-                val baseSim = jaccard(iCode, jCode)
-                if (baseSim < minSim) continue
+                        var bestSecond = -1
+                        var bestDelta = 0.0
 
-                // Δ по всей решётке или локально (в малом радиусе)
-                val delta = energyDeltaAfterSwap(
-                    firstIndex = firstIndex,
-                    secondIndex = secondIndex,
-                    lambda = lambda,
-                    eta = eta,
-                    restrictRadius = localEnergyRadius
-                )
+                        // Ограничиваем число кандидатов
+                        val candidatesAll = candidateIndices(firstIndex, searchRadius)
+                        if (candidatesAll.isEmpty()) continue
 
-                if (bestSecond == -1 || delta < bestDelta) {
-                    bestSecond = secondIndex
-                    bestDelta = delta
+                        val candidates = sampleIndices(candidatesAll, MAX_CAND_PER_FIRST, rnd)
+
+                        for (secondIndex in candidates) {
+                            if (secondIndex == firstIndex) continue
+                            val jCode = grid[secondIndex]
+                            if (jCode == -1) continue
+
+                            val baseSim = sim[iCode][jCode]
+                            if (baseSim < minSim) continue
+
+                            val delta = energyDeltaAfterSwapParallel(
+                                firstIndex = firstIndex,
+                                secondIndex = secondIndex,
+                                lambda = lambda,
+                                eta = eta,
+                                restrictRadius = localEnergyRadius,
+                                rnd = rnd
+                            )
+
+                            if (bestSecond == -1 || delta < bestDelta) {
+                                bestSecond = secondIndex
+                                bestDelta = delta
+                            }
+                        }
+
+                        if (bestSecond >= 0 && bestDelta < 0.0) {
+                            local += SwapProposal(firstIndex, bestSecond, bestDelta)
+                        }
+                    }
+                    local
                 }
-            }
-
-            if (bestSecond >= 0 && bestDelta < 0.0 && !taken[bestSecond]) {
-                swaps += firstIndex to bestSecond
-                taken[firstIndex] = true
-                taken[bestSecond] = true
             }
         }
 
-        // Применяем батч неконфликтующих свапов (атомарно)
+        val proposals = deferred.flatMap { it.await() }
+
+        val used = BooleanArray(grid.size)
+        val swaps = ArrayList<Pair<Int, Int>>()
+
+        proposals
+            .sortedBy { it.delta } // самые выгодные (наиболее отрицательные) вперёд
+            .forEach { p ->
+                if (swaps.size >= maxSwaps) return@forEach
+                if (used[p.a] || used[p.b]) return@forEach
+                used[p.a] = true
+                used[p.b] = true
+                swaps += p.a to p.b
+            }
+
+        // Применяем батч свапов атомарно
         for ((a, b) in swaps) {
-            val ia = grid[a]
-            val ib = grid[b]
-            grid[a] = ib
-            grid[b] = ia
+            val tmp = grid[a]
+            grid[a] = grid[b]
+            grid[b] = tmp
         }
     }
 
     // ======================= ЭНЕРГИЯ/СХОДСТВО =======================
 
     /**
-     * Аналитическая дельта энергии Δ = φ_swap - φ_current.
-     * Для каждой «третьей» точки r:
-     *   d1 = dist2(p, r), d2 = dist2(q, r)
-     *   s1 = τ(sim(iCode, rCode)), s2 = τ(sim(jCode, rCode))
-     *   вклад в Δ: (s2 - s1) * (d1 - d2)
-     *
-     * Если restrictRadius == null — суммируем по всем занятым r.
-     * Иначе — только по r в круге радиуса restrictRadius вокруг p и q.
+     * Параллельная оценка Δ с сэмплированием r.
+     * Если restrictRadius != null — используем только r в этом радиусе.
+     * Иначе выбираем подмножество всех {0..n-1} размером <= MAX_R_PER_DELTA.
      */
-    private fun energyDeltaAfterSwap(
+    private suspend fun energyDeltaAfterSwapParallel(
         firstIndex: Int,
         secondIndex: Int,
         lambda: Double,
         eta: Double,
         restrictRadius: Int?,
-    ): Double {
-        val iCode = grid[firstIndex] ?: return 0.0
-        val jCode = grid[secondIndex] ?: return 0.0
-        val p = toCoord(firstIndex)
-        val q = toCoord(secondIndex)
+        rnd: Random,
+    ): Double = coroutineScope {
+        val iCode = grid[firstIndex]
+        val jCode = grid[secondIndex]
+        if (iCode == -1 || jCode == -1) return@coroutineScope 0.0
 
         val useLocal = restrictRadius != null
-        val r2 = restrictRadius?.toDouble()?.pow(2.0) ?: 0.0
 
-        var delta = 0.0
-        grid.forEachIndexed { rIndex, rCodeIdx ->
-            val rCode = rCodeIdx ?: return@forEachIndexed
-            if (rIndex == firstIndex || rIndex == secondIndex) return@forEachIndexed
+        // Формируем список r-кандидатов для оценки
+        val rCandidates: IntArray = if (useLocal) {
+            val radius = restrictRadius!!
+            ensureNeighbors(radius)
+            val offsets = neighborOffsetsCache[radius]
+                ?: error("Neighbor offsets not precomputed for radius=$radius")
 
-            val rCoord = toCoord(rIndex)
-            val d1 = dist2(p, rCoord)
-            val d2 = dist2(q, rCoord)
+            val set = HashSet<Int>()
 
-            if (useLocal) {
-                val d1ok = d1 <= r2
-                val d2ok = d2 <= r2
-                if (!d1ok && !d2ok) return@forEachIndexed
+            localNeighbors(firstIndex, offsets).forEach { set += it }
+            localNeighbors(secondIndex, offsets).forEach { set += it }
+
+            set.remove(firstIndex)
+            set.remove(secondIndex)
+
+            val arr = set.filter { it < grid.size }.toIntArray()
+            if (arr.size > MAX_R_PER_DELTA) sampleIndices(arr, MAX_R_PER_DELTA, rnd) else arr
+        } else {
+            // глобальный случай: сэмплируем из 0..n-1
+            val all = IntArray(n - 2) { idx ->
+                if (idx >= firstIndex && idx + 1 < secondIndex) idx + 1
+                else if (idx >= secondIndex) idx + 2
+                else idx
             }
-
-            val s1 = tau(jaccard(iCode, rCode), lambda, eta)
-            val s2 = tau(jaccard(jCode, rCode), lambda, eta)
-
-            delta += (s2 - s1) * (d1 - d2)
+            if (all.size > MAX_R_PER_DELTA) sampleIndices(all, MAX_R_PER_DELTA, rnd) else all
         }
-        return delta
+
+        if (rCandidates.isEmpty()) return@coroutineScope 0.0
+
+        val totalWorkers = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        val workers = minOf(
+            (totalWorkers * ENERGY_WORKERS_FRACTION).toInt().coerceAtLeast(1),
+            rCandidates.size
+        )
+        val chunkSize = (rCandidates.size + workers - 1) / workers
+
+        val partial = (0 until workers).map { w ->
+            val from = w * chunkSize
+            if (from >= rCandidates.size) {
+                async(Dispatchers.Default) { 0.0 }
+            } else {
+                val to = minOf(from + chunkSize, rCandidates.size)
+                async(Dispatchers.Default) {
+                    var deltaPart = 0.0
+                    val r2Loc = restrictRadius?.toDouble()?.pow(2.0) ?: 0.0
+                    for (idx in from until to) {
+                        val rIndex = rCandidates[idx]
+                        val rCode = grid[rIndex]
+                        if (rCode == -1) continue
+
+                        val d1 = dist2(firstIndex, rIndex)
+                        val d2 = dist2(secondIndex, rIndex)
+
+                        if (useLocal) {
+                            val d1ok = d1 <= r2Loc
+                            val d2ok = d2 <= r2Loc
+                            if (!d1ok && !d2ok) continue
+                        }
+
+                        val s1 = tau(sim[iCode][rCode], lambda, eta)
+                        val s2 = tau(sim[jCode][rCode], lambda, eta)
+                        deltaPart += (s2 - s1) * (d1 - d2)
+                    }
+                    deltaPart
+                }
+            }
+        }
+
+        partial.sumOf { it.await() }
     }
 
-    /** Жаккар по единичным битам IntArray{0,1}. */
-    private fun jaccard(i: Int, j: Int): Double {
-        val a = angleCodes[i].second
-        val b = angleCodes[j].second
-        val m = minOf(a.size, b.size)
+    /** Жаккар по единичным битам для bitset-кодов. */
+    private fun jaccardBit(a: LongArray, b: LongArray): Double {
         var inter = 0
         var uni = 0
-        var k = 0
-        while (k < m) {
-            val ak = a[k]
-            val bk = b[k]
-            val a1 = ak == 1
-            val b1 = bk == 1
-            if (a1 || b1) uni++
-            if (a1 && b1) inter++
-            k++
+        for (i in a.indices) {
+            val aw = a[i]
+            val bw = b[i]
+            val and = aw and bw
+            val or  = aw or bw
+            inter += and.countOneBits()
+            uni   += or.countOneBits()
         }
         if (uni == 0) return 0.0
         return inter.toDouble() / uni.toDouble()
     }
 
-    /** τ-порог: τ(x) = x * σ(η(x - λ)). */
     private fun tau(x: Double, lambda: Double, eta: Double): Double {
-        val sig = 1.0 / (1.0 + exp(-eta * (x - lambda)))
+        val sig = if (eta == 0.0) 1.0 else 1.0 / (1.0 + exp(-eta * (x - lambda)))
         return x * sig
     }
 
     // ======================= ГЕОМЕТРИЯ/УТИЛИТЫ =======================
 
-    /** Кандидаты (индексы ячеек) в круге радиуса r от sourceIndex. */
-    private fun candidateIndices(sourceIndex: Int, radius: Int): Sequence<Int> {
-        val r = Random.nextInt(1..radius)
-        val r2 = r.toDouble().pow(2.0)
-        val (sy, sx) = toCoord(sourceIndex)
-        return grid.indices.asSequence().filter { idx ->
-            if (idx == sourceIndex) return@filter false
-            val (ty, tx) = toCoord(idx)
-            val dy = (ty - sy).toDouble()
-            val dx = (tx - sx).toDouble()
-            (dy * dy + dx * dx) <= r2
+    private fun ensureNeighbors(radius: Int) {
+        if (radius <= 0) return
+        if (!neighborOffsetsCache.containsKey(radius)) {
+            neighborOffsetsCache[radius] = buildNeighborOffsets(radius)
         }
     }
 
-    /** Квадрат евклидова расстояния между клетками (без sqrt). */
-    private fun dist2(a: Pair<Int, Int>, b: Pair<Int, Int>): Double {
-        val dy = (a.first - b.first).toDouble()
-        val dx = (a.second - b.second).toDouble()
+    /**
+     * Строит компактный список смещений (dy, dx) внутри круга радиуса radius.
+     * Возвращает IntArray длиной 2*K: [dy0, dx0, dy1, dx1, ...].
+     */
+    private fun buildNeighborOffsets(radius: Int): IntArray {
+        val r2 = radius.toDouble().pow(2.0)
+        val tmp = ArrayList<Int>()
+        for (dy in -radius..radius) {
+            for (dx in -radius..radius) {
+                if (dy == 0 && dx == 0) continue
+                val d2 = (dy * dy + dx * dx).toDouble()
+                if (d2 <= r2) {
+                    tmp += dy
+                    tmp += dx
+                }
+            }
+        }
+        return tmp.toIntArray()
+    }
+
+    /**
+     * Список кандидатов-клеток для firstIndex в радиусе radius.
+     * Строится на лету по смещениям, вместо хранения Array<IntArray> для всех ячеек.
+     */
+    private fun candidateIndices(sourceIndex: Int, radius: Int): IntArray {
+        if (radius <= 0) return IntArray(0)
+        val offsets = neighborOffsetsCache[radius]
+            ?: error("Neighbor offsets not precomputed for radius=$radius (call ensureNeighbors first)")
+
+        val sy = ys[sourceIndex]
+        val sx = xs[sourceIndex]
+
+        val maxCount = offsets.size / 2
+        val res = IntArray(maxCount)
+        var count = 0
+
+        var i = 0
+        while (i < offsets.size) {
+            val dy = offsets[i]
+            val dx = offsets[i + 1]
+            i += 2
+
+            val ny = sy + dy
+            val nx = sx + dx
+            if (ny < 0 || ny >= gridSize || nx < 0 || nx >= gridSize) continue
+
+            val idx = ny * gridSize + nx
+            res[count++] = idx
+        }
+
+        return if (count == res.size) res else res.copyOf(count)
+    }
+
+    /**
+     * Локальные соседи для центра centerIndex по уже готовым offsets (dy, dx).
+     * Используется при restrictRadius в energyDeltaAfterSwapParallel.
+     */
+    private fun localNeighbors(centerIndex: Int, offsets: IntArray): IntArray {
+        val cy = ys[centerIndex]
+        val cx = xs[centerIndex]
+
+        val maxCount = offsets.size / 2
+        val res = IntArray(maxCount)
+        var count = 0
+
+        var i = 0
+        while (i < offsets.size) {
+            val dy = offsets[i]
+            val dx = offsets[i + 1]
+            i += 2
+
+            val ny = cy + dy
+            val nx = cx + dx
+            if (ny < 0 || ny >= gridSize || nx < 0 || nx >= gridSize) continue
+
+            val idx = ny * gridSize + nx
+            if (idx == centerIndex) continue
+
+            res[count++] = idx
+        }
+
+        return if (count == res.size) res else res.copyOf(count)
+    }
+
+    private fun dist2(aIndex: Int, bIndex: Int): Double {
+        val dy = (ys[aIndex] - ys[bIndex]).toDouble()
+        val dx = (xs[aIndex] - xs[bIndex]).toDouble()
         return dy * dy + dx * dx
     }
 
-    /** Линейная интерполяция. */
-    private fun lerp(a: Double, b: Double, t: Double): Double = a + (b - a) * t.coerceIn(0.0, 1.0)
+    private fun lerp(a: Double, b: Double, t: Double): Double =
+        a + (b - a) * t.coerceIn(0.0, 1.0)
 
-    /** Индекс -> (y, x). */
-    private fun toCoord(index: Int): Pair<Int, Int> = index / gridSize to index % gridSize
+    private fun toCoord(index: Int): Pair<Int, Int> = ys[index] to xs[index]
 
-    /** Текущая карта координат (угол, y, x) для исходных кодов. */
-    private fun buildCoordinateMap(): List<Triple<Double, Int, Int>> {
-        val res = MutableList(n) { Triple(0.0, 0, 0) }
+    private fun buildCoordinateMap(): List<Triple<Double?, Int, Int>> {
+        val res = MutableList<Triple<Double?, Int, Int>>(n) { Triple(0.0, 0, 0) }
         grid.forEachIndexed { idx, codeIndex ->
-            val actual = codeIndex ?: return@forEachIndexed
-            val (angle, _) = angleCodes[actual]
+            if (codeIndex == -1) return@forEachIndexed
+            val (angle, _) = angleCodes[codeIndex]
             val (y, x) = toCoord(idx)
-            res[actual] = Triple(angle, y, x)
+            res[codeIndex] = Triple(angle, y, x)
         }
         return res
     }
 
-    /** Печать состояния решётки (для отладки/мониторинга). */
     private fun logGridState(epoch: Int, tag: String): String {
-        val sep = "," // безопасный разделитель для копипаста в Excel/CSV
+        val sep = ","
         val sb = StringBuilder()
         for (y in 0 until gridSize) {
             val row = (0 until gridSize).joinToString(sep) { x ->
                 val id = grid[y * gridSize + x]
-                when (id) {
-                    null -> ""                                    // пустая клетка → пустое поле CSV
+                when {
+                    id == -1 -> ""
                     else -> String.format(Locale.US, "%.1f", angleCodes[id].first)
-                    // если углы всегда кратны 1°, можно короче:
-                    // else -> angleCodes[id].first.roundToInt().toString()
                 }
             }
             sb.appendLine(row)
         }
         println("Эпоха ${epoch + 1} [$tag]:\n${sb.toString().trimEnd()}\n")
         return sb.toString().trimEnd()
+    }
+
+    // --------- вспомогательное сэмплирование индексов из массива ---------
+
+    private fun sampleIndices(src: IntArray, k: Int, rnd: Random): IntArray {
+        if (src.size <= k) return src
+        val res = IntArray(k)
+        // простой reservoir sampling / Фишер-Йетс на первых k
+        val tmp = src.copyOf()
+        var size = tmp.size
+        var i = 0
+        while (i < k) {
+            val j = rnd.nextInt(size)
+            res[i] = tmp[j]
+            // ставим выбранный в конец и уменьшаем "активный" размер
+            tmp[j] = tmp[size - 1]
+            size--
+            i++
+        }
+        return res
     }
 }

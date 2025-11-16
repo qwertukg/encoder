@@ -1,205 +1,250 @@
-import kotlin.jvm.Volatile
 import kotlin.math.PI
+import kotlin.math.roundToInt
+import kotlin.random.Random
 
 /**
- * SlidingWindowAngleEncoder — реализация канонического «скользящего окна» из разд. 4.4.1 DAML.
+ * SlidingWindowAngleEncoder — кодирует угол + ОБЯЗАТЕЛЬНЫЕ признаки x и y
+ * через «широкие детекторы» (скользящие окна с перекрытием).
  *
- * Алгоритм опирается на ключевые идеи статьи:
- * 1) Код строится из набора детекторов, которые «обходят» окружность и образуют топологически
- *    замкнутое пространство за счёт гранично-замкнутых окон (boundary closed windows).
- * 2) Слои детекторов имеют собственный радиальный шаг и фазовый сдвиг, что повторяет принцип
- *    многочастотного покрытия круга (аналог Figure 5 и Figure 7 из статьи).
- * 3) Плотность и перекрытие управляются параметрами arcLengthDegrees и overlapFraction, что
- *    соответствует требованию поддерживать схожую плотность активных битов на всём диапазоне
- *    углов.
- *
- * СОГЛАШЕНИЕ (contract) — корректность параметров проверяется при создании/переконфигурации:
- * 1) Сумма по слоям: Σ layers[k].detectorCount <= codeSizeInBits — иначе индекс выйдет за границы массива.
- * 2) Для каждого слоя: arcLengthDegrees > 0; detectorCount > 0; overlapFraction >= 0.
- * 3) Порядок слоёв значим (List сохраняет порядок конкатенации битов).
- * 4) Итоговая ширина окна слоя: windowWidthDegrees = arcLengthDegrees * (1 + overlapFraction).
- * 5) Шаг центров детекторов: centerStepRadians = arcLengthDegrees * π / 180 (поворот на длину дуги слоя).
- * 6) Фаза слоя k: layerPhaseRadians = (k / layerCount) * centerStepRadians; первый слой стартует с 0.
+ * Макет битов: [ANGLE-слои] ++ [X-слои] ++ [Y-слои]
  */
 class SlidingWindowAngleEncoder(
-    /** Конфигурации слоёв (см. data class Layer ниже). */
-    initialLayers: List<Layer> = listOf(
-        Layer(arcLengthDegrees = 90.0,   detectorCount = 4,   overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 45.0,   detectorCount = 8,   overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 22.5,   detectorCount = 16,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 11.25,  detectorCount = 32,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 5.625,  detectorCount = 64,  overlapFraction = 0.4),
-        Layer(arcLengthDegrees = 2.8125,  detectorCount = 128,  overlapFraction = 0.4),
+    // ---- ANGLE конфигурация ----
+    val layers: List<Layer> = listOf(
+        Layer(arcLengthDegrees = 90.0,   overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 45.0,   overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 22.5,   overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 11.25,  overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 5.625,  overlapFraction = 0.4, offsetDegrees = 0.0),
+        Layer(arcLengthDegrees = 2.8125, overlapFraction = 0.4, offsetDegrees = 0.0),
     ),
-    /** Размер результирующего кода в битах. */
-    initialCodeSizeInBits: Int = 256
+
+    // ---- X/Y конфигурации ----
+    val xLayers: List<LinearLayer> = listOf(
+        LinearLayer(baseWidthUnits = 0.25, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0),
+        LinearLayer(baseWidthUnits = 0.10, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0)
+    ),
+    val yLayers: List<LinearLayer> = listOf(
+        LinearLayer(baseWidthUnits = 0.25, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0),
+        LinearLayer(baseWidthUnits = 0.10, overlapFraction = 0.5, domainMin = -10.0, domainMax = 10.0)
+    ),
+
+    /** Размер кода: по умолчанию суммарное число детекторов ANGLE+X+Y. */
+    val codeSizeInBits: Int =
+        layers.sumOf { it.detectorCount } +
+                xLayers.sumOf { it.detectorCount } +
+                yLayers.sumOf { it.detectorCount },
+
+    /** Включить случайное отображение детекторов в биты. */
+    val useRandomBitMapping: Boolean = false,
+
+    /** seed для случайного отображения детекторов в биты. */
+    val randomSeed: Int = 12345
 ) {
-    /**
-     * Параметры одного слоя детекторов.
-     * @param arcLengthDegrees   базовая длина дуги (в градусах) без учёта перекрытия
-     * @param detectorCount      количество детекторов (центров) по кругу; шаг центров = arcLengthDegrees
-     * @param overlapFraction    доля перекрытия (например, 0.4 → итоговая ширина = arcLengthDegrees * 1.4)
-     */
-    data class Layer(val arcLengthDegrees: Double, val detectorCount: Int, val overlapFraction: Double)
+    /** Угловой слой (периодический). */
+    data class Layer(
+        val arcLengthDegrees: Double,
+        val offsetDegrees: Double = 0.0,
+        val overlapFraction: Double = 0.4
+    ) {
+        // Число детекторов автоматически: 360° / длину окна
+        val detectorCount: Int = (360.0 / arcLengthDegrees).roundToInt()
+    }
 
-    /** Полный круг в радианах (2π). */
+    /** Линейный слой (непериодический). */
+    data class LinearLayer(
+        val baseWidthUnits: Double,
+        val overlapFraction: Double,
+        val domainMin: Double,
+        val domainMax: Double
+    ) {
+        // Число детекторов автоматически из длины домена
+        val detectorCount: Int =
+            ((domainMax - domainMin) / baseWidthUnits).roundToInt().coerceAtLeast(1)
+    }
+
+    // --------- константы ---------
     val twoPi: Double = 2.0 * PI
-
-    /** Постоянный множитель перевода градусов в радианы (используется ниже много раз). */
     private val degreesToRadians: Double = PI / 180.0
 
-    /** Текущая конфигурация слоёв (копия исходных значений из конструктора). */
-    @Volatile
-    var layers: List<Layer> = initialLayers.toList()
-        private set
-
-    /** Текущий размер кодового слова. */
-    @Volatile
-    var codeSizeInBits: Int = initialCodeSizeInBits
-        private set
+    /** Общее число детекторов (ANG + X + Y) в логическом пространстве. */
+    private val totalDetectorsCount: Int =
+        layers.sumOf { it.detectorCount } +
+                xLayers.sumOf { it.detectorCount } +
+                yLayers.sumOf { it.detectorCount }
 
     /**
-     * Последний сгенерированный код (обновляется при каждом encode).
-     * Сделано var + private set, чтобы извне читался, но не изменялся.
+     * Отображение "логический индекс детектора" -> "фактический индекс бита в коде".
+     * Размер = totalDetectorsCount, значения в диапазоне 0 until codeSizeInBits.
      */
-    var lastEncodedCode: IntArray = IntArray(0)
-        private set
+    private val detectorToBitIndex: IntArray
+
+    /** Последний код (для отладки). */
+    var lastEncodedCode: IntArray = IntArray(0); private set
 
     init {
-        validateLayers(layers)
-        validateCodeSize(codeSizeInBits, layers)
+        validateCodeSize(codeSizeInBits, layers, xLayers, yLayers)
+
+        detectorToBitIndex = if (useRandomBitMapping) {
+            buildRandomDetectorMapping(
+                totalDetectors = totalDetectorsCount,
+                codeBits = codeSizeInBits,
+                seed = randomSeed
+            )
+        } else {
+            IntArray(totalDetectorsCount) { it } // детектор d -> бит d
+        }
     }
 
-    /**
-     * Кодирует угол (в радианах) в разряжённый битовый вектор фиксированной длины [codeSizeInBits].
-     *
-     * Основные шаги:
-     * - для каждого слоя рассчитываются ширина окна, шаг центров и фазовый сдвиг;
-     * - для каждого детектора слоя оценивается граница окна и проверяется принадлежность нормализованного угла;
-     * - детекторы, в чьё окно попал угол, активируют соответствующие биты итогового кода.
-     *
-     * ВНИМАНИЕ: никаких защит от выхода за границы массива НЕТ (см. контракт сверху).
-     *
-     * @param angleInRadians угол в радианах
-     * @return массив IntArray из 0/1 длиной [codeSizeInBits]
-     */
-    fun encode(angleInRadians: Double): IntArray {
-        val encodedBits = IntArray(codeSizeInBits) // итоговый разрежённый код
-        var globalBitOffset = 0 // смещение бита для текущего слоя
-        val layerCount = layers.size // требуется для расчёта фазового сдвига слоя
+    // ----------------- Публичное API -----------------
 
-        // Нормализуем угол в [0, 2π), чтобы гарантировать топологическую замкнутость по канону (разд. 4.4.1).
-        var angleWrapped = angleInRadians % twoPi
-        if (angleWrapped < 0.0) angleWrapped += twoPi
+    /** Единственный метод кодирования: угол + ОБЯЗАТЕЛЬНЫЕ x,y. */
+    fun encode(angleInRadians: Double, x: Double, y: Double): IntArray {
+        val totalBits = totalDetectors(layers, xLayers, yLayers)
+        require(totalBits <= codeSizeInBits) {
+            "codeSizeInBits=$codeSizeInBits меньше требуемых $totalBits бит"
+        }
+        val out = IntArray(codeSizeInBits)
+        var logicalOffset = 0 // смещение в логическом пространстве детекторов
 
-        layers.forEachIndexed { layerIndex, layer ->
-            // Ширина окна = длина дуги * (1 + overlapFraction); половину храним для удобства.
-            val windowWidthRadians = layer.arcLengthDegrees * (1.0 + layer.overlapFraction) * degreesToRadians
-            val halfWindowWidthRadians = windowWidthRadians / 2.0
-            // Шаг центров детекторов соответствует длине дуги слоя (см. DAML, Figure 5).
-            val centerStepRadians = layer.arcLengthDegrees * degreesToRadians
-            // Фазовый сдвиг слоя равномерно распределяет окна по каналу, предотвращая резонанс.
-            val layerPhaseRadians = (layerIndex.toDouble() / layerCount) * centerStepRadians
-
-            for (detectorIndex in 0 until layer.detectorCount) {
-                // Центр детектора = индекс * шаг + фазовый сдвиг.
-                val center = detectorIndex * centerStepRadians + layerPhaseRadians
-                val startRaw = center - halfWindowWidthRadians
-                val endRaw   = center + halfWindowWidthRadians
-
-                // Сворачиваем границы в [0, 2π) — реализуем boundary closed окно (см. Figure 7).
-                var start = startRaw % twoPi; if (start < 0.0) start += twoPi
-                var end   = endRaw   % twoPi; if (end   < 0.0) end   += twoPi
-
-                // Правая граница исключается, левая включается — один и тот же угол не активирует два окна.
-                val hit = if (start <= end) {
-                    angleWrapped >= start && angleWrapped < end
-                } else {
-                    // Окно пересекает 0 → проверяем оба сегмента (см. Figure 7 в статье).
-                    angleWrapped >= start || angleWrapped < end
+        // ---- ANGLE ----
+        if (layers.isNotEmpty()) {
+            var ang = angleInRadians % twoPi
+            if (ang < 0.0) ang += twoPi
+            val layerCount = layers.size
+            layers.forEachIndexed { idx, layer ->
+                val win = layer.arcLengthDegrees * (1.0 + layer.overlapFraction) * degreesToRadians
+                val half = win / 2.0
+                val step = layer.arcLengthDegrees * degreesToRadians
+                val phase = (idx.toDouble() / layerCount) * step
+                val offsetRad = layer.offsetDegrees * degreesToRadians
+                for (d in 0 until layer.detectorCount) {
+                    val center = d * step + phase + offsetRad
+                    val sRaw = center - half
+                    val eRaw = center + half
+                    var s = sRaw % twoPi; if (s < 0.0) s += twoPi
+                    var e = eRaw % twoPi; if (e < 0.0) e += twoPi
+                    val hit = if (s <= e) (ang >= s && ang < e) else (ang >= s || ang < e)
+                    if (hit) setDetectorBit(logicalOffset + d, out)
                 }
+                logicalOffset += layer.detectorCount
+            }
+        }
 
-                if (hit) {
-                    encodedBits[globalBitOffset + detectorIndex] = 1 // активируем соответствующий бит
+        // ---- X ----
+        encodeLinear1D(xLayers, x, out, logicalOffset)
+        logicalOffset += xLayers.sumOf { it.detectorCount }
+
+        // ---- Y ----
+        encodeLinear1D(yLayers, y, out, logicalOffset)
+
+        lastEncodedCode = out
+        return out
+    }
+
+    // ----------------- внутренние утилиты -----------------
+
+    /**
+     * Устанавливает бит для детектора с логическим индексом detectorIndex.
+     */
+    private fun setDetectorBit(detectorIndex: Int, out: IntArray) {
+        val bitIndex = detectorToBitIndex[detectorIndex]
+        out[bitIndex] = 1
+    }
+
+    private fun encodeLinear1D(
+        layers: List<LinearLayer>,
+        value: Double,
+        out: IntArray,
+        logicalBitOffset: Int
+    ) {
+        var logicalOffset = logicalBitOffset
+        val layerCount = layers.size
+        layers.forEachIndexed { idx, L ->
+            require(L.domainMax > L.domainMin) { "Некорректный домен линейного слоя: max<=min" }
+            val v = value.coerceIn(L.domainMin, L.domainMax)
+            val baseW = L.baseWidthUnits
+            val winW  = baseW * (1.0 + L.overlapFraction)
+            val halfW = winW / 2.0
+            val domainLen = L.domainMax - L.domainMin
+            val step = domainLen / L.detectorCount
+            val phase = (idx.toDouble() / layerCount) * step
+            for (d in 0 until L.detectorCount) {
+                val center = L.domainMin + d * step + phase
+                val s = center - halfW
+                val e = center + halfW
+                if (v >= s && v < e) {
+                    setDetectorBit(logicalOffset + d, out)
                 }
             }
-            globalBitOffset += layer.detectorCount
+            logicalOffset += L.detectorCount
         }
-
-        lastEncodedCode = encodedBits
-        return encodedBits
     }
+
+    private fun totalDetectors(
+        a: List<Layer>,
+        x: List<LinearLayer>,
+        y: List<LinearLayer>
+    ): Int =
+        a.sumOf { it.detectorCount } + x.sumOf { it.detectorCount } + y.sumOf { it.detectorCount }
 
     /**
-     * Переопределяет конфигурацию слоёв согласно канону DAML (разд. 4.4.1) и при необходимости
-     * обновляет размер кодового слова. Используется UI, чтобы интерактивно менять покрытие.
+     * Строит случайное отображение логических детекторов в биты:
+     * детекторы 0..totalDetectors-1 -> уникальные битовые индексы в 0 until codeBits.
      */
-    fun reconfigure(newLayers: List<Layer>, requestedCodeSizeInBits: Int? = null) {
-        validateLayers(newLayers)
-        val sanitizedLayers = newLayers.toList()
-        val effectiveCodeSize = requestedCodeSizeInBits ?: sanitizedLayers.sumOf { it.detectorCount }
-        validateCodeSize(effectiveCodeSize, sanitizedLayers)
-
-        layers = sanitizedLayers
-        codeSizeInBits = effectiveCodeSize
-        lastEncodedCode = IntArray(0)
-    }
-
-    /**
-     * Генерирует канонический набор кодов для всей окружности с заданным шагом по градусам.
-     * Используется для расчёта статистик и профилей корреляции согласно DAML.
-     */
-    fun sampleFullCircle(stepDegrees: Double = 1.0): List<Pair<Double, IntArray>> {
-        require(stepDegrees > 0.0) {
-            "Шаг дискретизации должен быть положительным"
-        }
-        val steps = (360.0 / stepDegrees).toInt()
-        require(kotlin.math.abs(steps * stepDegrees - 360.0) < 1e-6) {
-            "Шаг дискретизации должен делить полный круг без остатка"
+    private fun buildRandomDetectorMapping(
+        totalDetectors: Int,
+        codeBits: Int,
+        seed: Int
+    ): IntArray {
+        require(codeBits >= totalDetectors) {
+            "codeBits ($codeBits) должен быть >= totalDetectors ($totalDetectors) для случайного отображения"
         }
 
-        return (0 until steps).map { index ->
-            val angleDegrees = index * stepDegrees
-            val angleRadians = angleDegrees * PI / 180.0
-            angleRadians to encode(angleRadians).copyOf()
+        // Перемешиваем массив [0, 1, 2, ..., codeBits-1] и берём первые totalDetectors
+        val arr = IntArray(codeBits) { it }
+        val rnd = Random(seed)
+        for (i in arr.indices.reversed()) {
+            val j = rnd.nextInt(i + 1)
+            val tmp = arr[i]
+            arr[i] = arr[j]
+            arr[j] = tmp
         }
+        return arr.copyOf(totalDetectors)
     }
 }
 
-private fun validateLayers(layers: List<SlidingWindowAngleEncoder.Layer>) {
-    require(layers.isNotEmpty()) {
-        "Должен существовать хотя бы один слой детекторов"
-    }
-    layers.forEachIndexed { index, layer ->
-        require(layer.arcLengthDegrees > 0.0) {
-            "Длина дуги слоя ${index + 1} должна быть положительной"
-        }
-        require(layer.detectorCount > 0) {
-            "Количество детекторов слоя ${index + 1} должно быть положительным"
-        }
-        require(layer.overlapFraction >= 0.0) {
-            "Перекрытие слоя ${index + 1} не может быть отрицательным"
-        }
+// ----------------- валидации -----------------
+
+private fun validateAngleLayers(layers: List<SlidingWindowAngleEncoder.Layer>) {
+    require(layers.isNotEmpty()) { "Должен быть хотя бы один угловой слой" }
+    layers.forEachIndexed { i, L ->
+        require(L.arcLengthDegrees > 0.0) { "Angle: arcLengthDegrees слоя ${i + 1} должен быть > 0" }
+        require(L.detectorCount > 0)      { "Angle: detectorCount слоя ${i + 1} должен быть > 0" }
+        require(L.overlapFraction >= 0.0) { "Angle: overlapFraction слоя ${i + 1} не может быть отрицательным" }
     }
 }
 
-private fun validateCodeSize(codeSizeInBits: Int, layers: List<SlidingWindowAngleEncoder.Layer>) {
-    require(codeSizeInBits > 0) {
-        "Размер кодового слова должен быть положительным"
-    }
-    val detectorBudget = layers.sumOf { it.detectorCount }
-    require(codeSizeInBits >= detectorBudget) {
-        "Размер кодового слова ($codeSizeInBits) меньше числа детекторов ($detectorBudget)"
+private fun validateLinearLayersNonEmpty(
+    layers: List<SlidingWindowAngleEncoder.LinearLayer>,
+    tag: String
+) {
+    require(layers.isNotEmpty()) { "$tag: должен быть хотя бы один слой" }
+    layers.forEachIndexed { i, L ->
+        require(L.baseWidthUnits > 0.0)   { "$tag: baseWidthUnits слоя ${i + 1} должен быть > 0" }
+        require(L.detectorCount > 0)      { "$tag: detectorCount слоя ${i + 1} должен быть > 0" }
+        require(L.overlapFraction >= 0.0) { "$tag: overlapFraction слоя ${i + 1} не может быть отрицательным" }
+        require(L.domainMax > L.domainMin){ "$tag: domainMax должен быть > domainMin (слой ${i + 1})" }
     }
 }
 
-/* -----------------------------
-   Пример использования (опционально):
-
-fun viz.main() {
-    val encoder = SlidingWindowAngleEncoder()
-    val angleRadians = 200.0 * PI / 180.0
-    val code = encoder.encode(angleRadians)
-    println(code.joinToString(""))
+private fun validateCodeSize(
+    codeSizeInBits: Int,
+    a: List<SlidingWindowAngleEncoder.Layer>,
+    x: List<SlidingWindowAngleEncoder.LinearLayer>,
+    y: List<SlidingWindowAngleEncoder.LinearLayer>
+) {
+    require(codeSizeInBits > 0) { "Размер кодового слова должен быть положительным" }
+    val need = a.sumOf { it.detectorCount } + x.sumOf { it.detectorCount } + y.sumOf { it.detectorCount }
+    require(codeSizeInBits >= need) { "codeSizeInBits ($codeSizeInBits) меньше числа детекторов ($need)" }
 }
------------------------------ */
