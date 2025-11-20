@@ -50,7 +50,7 @@ fun main() {
     val codes = mutableListOf<Pair<Double, IntArray>>()
     var a = a0
     while (a < aN) {
-        a += 1.0
+        a += 10.0
 
         var x = x0
         while (x < xN) {
@@ -75,7 +75,7 @@ fun main() {
 //    showSimilarityCurve(matrix, 0.0)
 
 
-    val emptyCodes: List<Pair<Double?, IntArray>> = (0..2500).map { null to IntArray(encoder.codeSizeInBits) }
+    val emptyCodes: List<Pair<Double?, IntArray>> = (0..1000).map { null to IntArray(encoder.codeSizeInBits) }
 
     // CPU processing
     val cpuTime = measureTime {
