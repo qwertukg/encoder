@@ -18,6 +18,8 @@ import javax.swing.JFrame
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+private const val MAX_CORRELATION_DIM = 5_000
+
 fun cosBits(a: IntArray, b: IntArray): Double {
     val m = minOf(a.size, b.size)
     var dot = 0
@@ -56,14 +58,24 @@ private fun jaccardBits(a: IntArray, b: IntArray): Double {
 fun buildCodeCorrelationMatrix(
     angleCodes: List<Pair<Double, IntArray>>
 ): Array<DoubleArray> {
-    val n = angleCodes.size
+    val uniqueAngleCodes = angleCodes
+        .groupBy { it.first }
+        .entries
+        .sortedBy { it.key }
+        .map { (_, codesAtAngle) -> codesAtAngle.first() }
+
+    val n = uniqueAngleCodes.size
+    require(n <= MAX_CORRELATION_DIM) {
+        "Correlation matrix dimension $n exceeds safe limit of $MAX_CORRELATION_DIM; reduce input size."
+    }
+
     val sim = Array(n) { DoubleArray(n) }
 
     for (i in 0 until n) {
         sim[i][i] = 1.0
-        val a = angleCodes[i].second
+        val a = uniqueAngleCodes[i].second
         for (j in i + 1 until n) {
-            val b = angleCodes[j].second
+            val b = uniqueAngleCodes[j].second
             val v = jaccardBits(a, b)
 //            val v = cosBits(a, b)
             sim[i][j] = v
