@@ -476,16 +476,26 @@ class DampLayout2D(
         val sb = StringBuilder()
         for (y in 0 until gridSize) {
             val row = (0 until gridSize).joinToString(sep) { x ->
-                val id = grid[y * gridSize + x]
-                when {
-                    id == -1 -> ""
-                    else -> String.format(Locale.US, "%.1f", angleCodes[id].first)
+                val cellIndex = y * gridSize + x
+                val id = grid[cellIndex]
+                if (id == -1) {
+                    "" // пустая ячейка
+                } else {
+                    val angle = angleCodes[id].first
+                    if (angle == null) {
+                        ""
+                    } else {
+                        // формат: angle;y;x
+                        val aStr = String.format(Locale.US, "%.1f", angle)
+                        "$aStr;$y;$x"
+                    }
                 }
             }
             sb.appendLine(row)
         }
-        println("Эпоха ${epoch + 1} [$tag]:\n${sb.toString().trimEnd()}\n")
-        return sb.toString().trimEnd()
+        val txt = sb.toString().trimEnd()
+        println("Эпоха ${epoch + 1} [$tag]:\n$txt\n")
+        return txt
     }
 
     // --------- вспомогательное сэмплирование индексов из массива ---------

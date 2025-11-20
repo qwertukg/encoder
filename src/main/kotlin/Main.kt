@@ -10,9 +10,9 @@ fun main() {
     val a0 = 0.0
     val aN = 360.0
     val x0 = 0.0
-    val xN = 10.0
+    val xN = 50.0
     val y0 = 0.0
-    val yN = 10.0
+    val yN = 50.0
 
     val encoder = SlidingWindowAngleEncoder(
         // ---- ANGLE конфигурация ----
@@ -30,7 +30,7 @@ fun main() {
             LinearLayer(baseWidthUnits = 4.0,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
             LinearLayer(baseWidthUnits = 8.0,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
             LinearLayer(baseWidthUnits = 16.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
-            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+//            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
         ),
         // ---- Y конфигурации ----
         listOf(
@@ -39,9 +39,9 @@ fun main() {
             LinearLayer(baseWidthUnits = 4.0,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
             LinearLayer(baseWidthUnits = 8.0,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
             LinearLayer(baseWidthUnits = 16.0, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
-            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+//            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
         ),
-        256,
+        315,
         true,
 
     )
@@ -54,11 +54,11 @@ fun main() {
 
         var x = x0
         while (x < xN) {
-            x += 1.0
+            x += 10.0
 
             var y = y0
             while (y < yN) {
-                y += 1.0
+                y += 10.0
 
                 val angleRad = toRadians(a)
                 val code = encoder.encode(angleRad, x, y)
@@ -75,7 +75,7 @@ fun main() {
 //    showSimilarityCurve(matrix, 0.0)
 
 
-    val emptyCodes: List<Pair<Double?, IntArray>> = (0..1000).map { null to IntArray(encoder.codeSizeInBits) }
+    val emptyCodes: List<Pair<Double?, IntArray>> = (0..300).map { null to IntArray(encoder.codeSizeInBits) }
 
     // CPU processing
     val cpuTime = measureTime {
@@ -83,8 +83,8 @@ fun main() {
         val layout = DampLayout2D(angleCodes = codes + emptyCodes)
 
         val outCPU = layout.layoutLongRange(
-            farRadius = 70,
-            epochs = 30,
+            farRadius = 15,
+            epochs = 100,
             minSim = 0.00,
             lambdaStart = 0.30,
             lambdaEnd = 0.90,

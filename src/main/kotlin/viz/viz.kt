@@ -2,83 +2,60 @@ package viz
 
 import java.awt.*
 import javax.swing.*
-import java.io.File
-import kotlin.math.*
+import kotlin.math.sqrt
 
-private fun readAnglesCsv(path: String): List<List<String>> =
-    File(path).readLines().filter { it.isNotBlank() }
-        .map { it.split(',').map { s -> s.trim() } }
+// одна ячейка: угол + две координаты (y,x), записанные logGridState как "angle;y;x"
+data class AnglePos(
+    val angleDeg: Double,
+    val row: Int,
+    val col: Int
+)
 
-private fun readAnglesString(anglesString: String): List<List<String>> =
-    anglesString.split("\n").filter { it.isNotBlank() }
-        .map { it.split(',').map { s -> s.trim() } }
-
-private class ArrowGrid(
-    private val ang: List<List<String>>,
-    private val cell: Int = 32
-) : JPanel() {
-    init {
-        preferredSize = Dimension(ang.first().size * cell, ang.size * cell)
-        background = Color.WHITE
-    }
-
-    override fun paintComponent(g: Graphics) {
-        super.paintComponent(g)
-        val g2 = g as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-
-        // сетка (светло-серая)
-        g2.color = Color(230, 230, 230)
-        for (r in 0..ang.size) g2.drawLine(0, r * cell, ang[0].size * cell, r * cell)
-        for (c in 0..ang[0].size) g2.drawLine(c * cell, 0, c * cell, ang.size * cell)
-
-        val len = cell * 0.38
-        val head = cell * 0.18
-        val phi = Math.PI / 7
-
-        for (r in ang.indices) for (c in ang[r].indices) {
-            val angle = ang[r][c]
-            if (angle.isEmpty()) continue
-            val angleDouble = angle.toDouble()
-            val cx = c * cell + cell / 2.0
-            val cy = r * cell + cell / 2.0
-            val a = Math.toRadians(angleDouble)        // 0° вправо, 90° вверх
-            val x2 = cx + len * cos(a)
-            val y2 = cy - len * sin(a)               // инверсия Y для экрана
-
-            g2.color = Color.BLACK
-            g2.drawLine(cx.toInt(), cy.toInt(), x2.toInt(), y2.toInt())
-
-            // наконечник стрелки
-            val theta = atan2(cy - y2, x2 - cx)      // угол линии (с учётом экранного Y)
-            for (s in intArrayOf(1, -1)) {
-                val rho = theta + phi * s
-                val x = x2 - head * cos(rho)
-                val y = y2 + head * sin(rho)
-                g2.drawLine(x2.toInt(), y2.toInt(), x.toInt(), y.toInt())
-            }
+private fun readAnglePosMatrix(anglesString: String): List<List<AnglePos?>> =
+    anglesString
+        .lines()
+        .map { it.trimEnd() }
+        .filter { it.isNotEmpty() }
+        .map { line ->
+            line.split(',')
+                .map { cell ->
+                    val s = cell.trim()
+                    if (s.isEmpty() || s == "n") {
+                        null
+                    } else {
+                        val parts = s.split(';')
+                        val angle = parts.getOrNull(0)?.trim()?.toDoubleOrNull()
+                        val row   = parts.getOrNull(1)?.trim()?.toIntOrNull()
+                        val col   = parts.getOrNull(2)?.trim()?.toIntOrNull()
+                        if (angle == null || row == null || col == null) {
+                            null
+                        } else {
+                            AnglePos(angle, row, col)
+                        }
+                    }
+                }
         }
-    }
-}
 
-val frame = JFrame("Angle matrix")
+val frame = JFrame("Angle-position layout")
 
 fun showLayout(anglesString: String) {
-    val angles = readAnglesString(anglesString)
-//    val angles = readAnglesCsv("src/main/kotlin/viz/data.csv")
+    val matrix = readAnglePosMatrix(anglesString)
     SwingUtilities.invokeLater {
         frame.apply {
             defaultCloseOperation = JFrame.EXIT_ON_CLOSE
-            contentPane = JScrollPane(DotGrid(angles, 5))
-            pack(); setLocationRelativeTo(null); isVisible = true
+            contentPane = JScrollPane(DotGrid(matrix, 5))
+            pack()
+            setLocationRelativeTo(null)
+            isVisible = true
         }
     }
 }
 
 class DotGrid(
-    private val ang: List<List<String>>,
+    private val ang: List<List<AnglePos?>>,
     private val cell: Int
 ) : JPanel() {
+
     init {
         preferredSize = Dimension(ang.first().size * cell, ang.size * cell)
         background = Color.BLACK
@@ -89,17 +66,33 @@ class DotGrid(
         val g2 = g as Graphics2D
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
+        if (ang.isEmpty() || ang.first().isEmpty()) return
+
+        val maxRow = (ang.size - 1).coerceAtLeast(1)
+        val maxCol = (ang.first().size - 1).coerceAtLeast(1)
+
         for (r in ang.indices) {
             for (c in ang[r].indices) {
-                val angle = ang[r][c]
-                if (angle.isEmpty() || angle == "n") continue
+                val cellVal = ang[r][c] ?: continue
 
-                val angleDeg = angle.toDouble()
-                val cx = c * cell + cell / 2.0
-                val cy = r * cell + cell / 2.0
+                val angleDeg = cellVal.angleDeg
 
-                g2.color = colorForAngle(angleDeg)
-                g2.fillRect(cx.toInt(), cy.toInt(), cell, cell)
+                // нормализуем "позицию" из логов (row/col, которые писал layout)
+                val ny = cellVal.row.toFloat() / maxRow
+                val nx = cellVal.col.toFloat() / maxCol
+
+                // угло-позиция:
+                // - hue: угол
+                // - saturation: зависит от x
+                // - value: зависит от y (чем ближе к "верху", тем ярче)
+                val s = (0.5f + 0.5f * nx).coerceIn(0f, 1f)
+                val v = (0.5f + 0.5f * (1f - ny)).coerceIn(0f, 1f)
+
+                val cx = c * cell
+                val cy = r * cell
+
+                g2.color = colorForAngle(angleDeg, s, v)
+                g2.fillRect(cx, cy, cell, cell)
             }
         }
     }
@@ -107,6 +100,6 @@ class DotGrid(
     private fun colorForAngle(deg: Double, s: Float = 0.9f, v: Float = 0.95f): Color {
         val d = ((deg % 360.0) + 360.0) % 360.0
         val hue = (d / 360.0).toFloat()
-        return Color.getHSBColor(hue, s, v)
+        return Color.getHSBColor(hue, 1f, 1f)
     }
 }
