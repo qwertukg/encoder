@@ -10,9 +10,9 @@ fun main() {
     val a0 = 0.0
     val aN = 360.0
     val x0 = 0.0
-    val xN = 1.0
+    val xN = 10.0
     val y0 = 0.0
-    val yN = 1.0
+    val yN = 10.0
 
     val encoder = SlidingWindowAngleEncoder(
         // ---- ANGLE конфигурация ----
@@ -25,18 +25,21 @@ fun main() {
         ),
         // ---- X конфигурации ----
         listOf(
-            LinearLayer(baseWidthUnits = 1.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
-            LinearLayer(baseWidthUnits = 2.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
-            LinearLayer(baseWidthUnits = 4.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
-            LinearLayer(baseWidthUnits = 8.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 1.0,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 2.0,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 4.0,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 8.0,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
             LinearLayer(baseWidthUnits = 16.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
             LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
         ),
         // ---- Y конфигурации ----
         listOf(
-//            LinearLayer(baseWidthUnits = 0.5, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
-//            LinearLayer(baseWidthUnits = 1.5, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
-//            LinearLayer(baseWidthUnits = 2.5, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+            LinearLayer(baseWidthUnits = 1.0,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+            LinearLayer(baseWidthUnits = 2.0,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+            LinearLayer(baseWidthUnits = 4.0,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+            LinearLayer(baseWidthUnits = 8.0,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+            LinearLayer(baseWidthUnits = 16.0, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
+            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
         ),
         256,
         true,
