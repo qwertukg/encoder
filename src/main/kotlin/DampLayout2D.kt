@@ -1,5 +1,6 @@
 import viz.showLayout
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.pow
@@ -38,8 +39,8 @@ class DampLayout2D(
     // bitset-представление кодов: один LongArray на код
     private val bitCodes: Array<LongArray> = Array(n) { LongArray(wordsPerCode) }
 
-    // Предрасчитанная матрица сходств Жаккара (по единичным битам)
-    private val sim: Array<DoubleArray> = Array(n) { DoubleArray(n) }
+    // Ленивая кешируемая матрица сходств Жаккара (по единичным битам)
+    private val simCache = ConcurrentHashMap<Long, Double>()
 
     /**
      * Кеш смещений соседей по радиусу:
@@ -65,16 +66,6 @@ class DampLayout2D(
                     }
                     k++
                 }
-            }
-        }
-
-        // sim-матрица (осторожно: O(n^2) по памяти)
-        for (i in 0 until n) {
-            sim[i][i] = 1.0
-            for (j in i + 1 until n) {
-                val s = if (wordsPerCode == 0) 0.0 else jaccardBit(bitCodes[i], bitCodes[j])
-                sim[i][j] = s
-                sim[j][i] = s
             }
         }
 
@@ -189,7 +180,7 @@ class DampLayout2D(
                             val jCode = grid[secondIndex]
                             if (jCode == -1) continue
 
-                            val baseSim = sim[iCode][jCode]
+                            val baseSim = similarity(iCode, jCode)
                             if (baseSim < minSim) continue
 
                             val delta = energyDeltaAfterSwapParallel(
@@ -319,8 +310,8 @@ class DampLayout2D(
                             if (!d1ok && !d2ok) continue
                         }
 
-                        val s1 = tau(sim[iCode][rCode], lambda, eta)
-                        val s2 = tau(sim[jCode][rCode], lambda, eta)
+                        val s1 = tau(similarity(iCode, rCode), lambda, eta)
+                        val s2 = tau(similarity(jCode, rCode), lambda, eta)
                         deltaPart += (s2 - s1) * (d1 - d2)
                     }
                     deltaPart
@@ -329,6 +320,19 @@ class DampLayout2D(
         }
 
         partial.sumOf { it.await() }
+    }
+
+    private fun similarity(i: Int, j: Int): Double {
+        if (i == j) return 1.0
+        if (wordsPerCode == 0) return 0.0
+
+        val a = minOf(i, j)
+        val b = maxOf(i, j)
+        val key = (a.toLong() shl 32) or (b.toLong() and 0xffffffffL)
+
+        return simCache.computeIfAbsent(key) {
+            jaccardBit(bitCodes[a], bitCodes[b])
+        }
     }
 
     /** Жаккар по единичным битам для bitset-кодов. */
