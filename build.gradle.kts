@@ -13,6 +13,10 @@ repositories {
 val ktorVersion = "3.0.1"
 
 dependencies {
+    implementation("io.ktor:ktor-client-core:${ktorVersion}")
+    implementation("io.ktor:ktor-client-logging:${ktorVersion}")
+    implementation("io.ktor:ktor-client-cio:${ktorVersion}")
+
     implementation("org.jfree:jfreechart:1.5.4")
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-netty:$ktorVersion")

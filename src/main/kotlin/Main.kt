@@ -25,12 +25,12 @@ fun main() {
         ),
         // ---- X конфигурации ----
         listOf(
-//            LinearLayer(baseWidthUnits = 1.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
-//            LinearLayer(baseWidthUnits = 2.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
-//            LinearLayer(baseWidthUnits = 4.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
-//            LinearLayer(baseWidthUnits = 8.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
-//            LinearLayer(baseWidthUnits = 16.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
-//            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 1.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 2.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 4.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 8.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 16.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
+            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = x0, domainMax = xN),
         ),
         // ---- Y конфигурации ----
         listOf(
@@ -81,7 +81,7 @@ fun main() {
 
         val outCPU = layout.layoutLongRange(
             farRadius = 70,
-            epochs = 100,
+            epochs = 30,
             minSim = 0.00,
             lambdaStart = 0.30,
             lambdaEnd = 0.90,
