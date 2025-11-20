@@ -71,8 +71,8 @@ fun main() {
 
 
 //    val matrix = showAngleCodesCorrelationHeatmap(codes)
-    val matrix = buildCodeCorrelationMatrix(codes)
-    showSimilarityCurve(matrix, 0.0)
+//    val matrix = buildCodeCorrelationMatrix(codes)
+//    showSimilarityCurve(matrix, 0.0)
 
 
     val emptyCodes: List<Pair<Double?, IntArray>> = (0..2500).map { null to IntArray(encoder.codeSizeInBits) }
