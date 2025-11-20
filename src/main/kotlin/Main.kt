@@ -17,11 +17,23 @@ fun main() {
     val encoder = SlidingWindowAngleEncoder(
         // ---- ANGLE конфигурация ----
         listOf(
-            Layer(120.0),
-            Layer(60.0),
-            Layer(30.0),
-            Layer(15.0),
-            Layer(5.0),
+            // Два смещенных друг относительно друга набора окон,
+            // чтобы получить «двойной» пинвил (см. DAML.pdf, секции про
+            // сглаженный циклический градиент).
+            Layer(120.0, offsetDegrees = 0.0),
+            Layer(120.0, offsetDegrees = 60.0),
+
+            Layer(60.0, offsetDegrees = 0.0),
+            Layer(60.0, offsetDegrees = 30.0),
+
+            Layer(30.0, offsetDegrees = 0.0),
+            Layer(30.0, offsetDegrees = 15.0),
+
+            Layer(15.0, offsetDegrees = 0.0),
+            Layer(15.0, offsetDegrees = 7.5),
+
+            Layer(5.0, offsetDegrees = 0.0),
+            Layer(5.0, offsetDegrees = 2.5),
         ),
         // ---- X конфигурации ----
         listOf(
