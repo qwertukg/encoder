@@ -49,7 +49,7 @@ fun main() {
     )
 
 
-    val codes = mutableListOf<Pair<Double, IntArray>>()
+    val codes = mutableListOf<Pair<Proto, IntArray>>()
     var a = a0
     while (a < aN) {
         a += 1.0
@@ -65,7 +65,8 @@ fun main() {
                 val angleRad = toRadians(a)
                 val code = encoder.encode(angleRad, x, y)
                 println("$a:$x:$y\t" + code.joinToString("", "[", "]"))
-                codes += a to code
+                val proto = Proto(angle = a, x = x.toInt(), y = y.toInt())
+                codes += proto to code
             }
         }
 
@@ -77,7 +78,7 @@ fun main() {
 //    showSimilarityCurve(matrix, 0.0)
 
 
-    val emptyCodes: List<Pair<Double?, IntArray>> = (0..100).map { null to IntArray(encoder.codeSizeInBits) }
+    val emptyCodes: List<Pair<Proto?, IntArray>> = (0..100).map { null to IntArray(encoder.codeSizeInBits) }
 
     // CPU processing
     val cpuTime = measureTime {

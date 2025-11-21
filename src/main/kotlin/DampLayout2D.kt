@@ -14,7 +14,7 @@ private const val MAX_CAND_PER_FIRST = 16       // ограничение чис
 private const val MAX_R_PER_DELTA     = 1000    // ограничение числа r в energyDelta
 
 class DampLayout2D(
-    private val codes: List<Pair<Double?, IntArray>>,
+    private val codes: List<Pair<Proto?, IntArray>>,
     randomizeStart: Boolean = true,
     seed: Int = 42,
 ) {
@@ -98,7 +98,7 @@ class DampLayout2D(
         log: Boolean = true,
         // если хочется ускорить: можно сразу задавать localEnergyRadius = farRadius
         forceLocalEnergyRadius: Int? = null,
-    ): List<Triple<Double?, Int, Int>> {
+    ): List<Triple<Proto?, Int, Int>> {
         if (n == 0) return emptyList()
 
         ensureNeighbors(farRadius)
@@ -434,13 +434,13 @@ class DampLayout2D(
 
     private fun toCoord(index: Int): Pair<Int, Int> = ys[index] to xs[index]
 
-    private fun buildCoordinateMap(): List<Triple<Double?, Int, Int>> {
-        val res = MutableList<Triple<Double?, Int, Int>>(n) { Triple(0.0, 0, 0) }
+    private fun buildCoordinateMap(): List<Triple<Proto?, Int, Int>> {
+        val res = MutableList<Triple<Proto?, Int, Int>>(n) { Triple(null, 0, 0) }
         grid.forEachIndexed { idx, codeIndex ->
             if (codeIndex == -1) return@forEachIndexed
-            val (angle, _) = codes[codeIndex]
+            val (proto, _) = codes[codeIndex]
             val (y, x) = toCoord(idx)
-            res[codeIndex] = Triple(angle, y, x)
+            res[codeIndex] = Triple(proto, y, x)
         }
         return res
     }
@@ -455,7 +455,7 @@ class DampLayout2D(
                 if (id == -1) {
                     "" // пустая ячейка
                 } else {
-                    val angle = codes[id].first
+                    val angle = codes[id].first?.angle
                     if (angle == null) {
                         ""
                     } else {
