@@ -37,10 +37,13 @@ class DampLayout2D(
     // bitset-представление кодов: один LongArray на код
     private val bitCodes: Array<LongArray> = Array(n) { LongArray(wordsPerCode) }
 
-    // Плотная матрица сходств Жаккара: NaN -> ещё не считали
-    private val simMatrix: DoubleArray = DoubleArray(n * n) { Double.NaN }.also { matrix ->
+    // Плотная матрица сходств Жаккара (верхний треугольник): NaN -> ещё не считали
+    private val simMatrixSize: Long = (n.toLong() * (n + 1L) / 2L).also {
+        require(it <= Int.MAX_VALUE) { "Similarity matrix too large for in-memory storage (n=$n)" }
+    }
+    private val simMatrix: FloatArray = FloatArray(simMatrixSize.toInt()) { Float.NaN }.also { matrix ->
         for (i in 0 until n) {
-            matrix[i * n + i] = 1.0
+            matrix[simIndexUpperTri(i, i)] = 1.0f
         }
     }
 
@@ -315,15 +318,14 @@ class DampLayout2D(
 
         val a = minOf(i, j)
         val b = maxOf(i, j)
-        val idx1 = a * n + b
+        val idx1 = simIndexUpperTri(a, b)
         val cached = simMatrix[idx1]
-        if (!cached.isNaN()) return cached
+        if (!cached.isNaN()) return cached.toDouble()
 
         val s = jaccardBit(bitCodes[a], bitCodes[b])
         synchronized(simMatrix) {
             if (simMatrix[idx1].isNaN()) {
-                simMatrix[idx1] = s
-                simMatrix[b * n + a] = s
+                simMatrix[idx1] = s.toFloat()
             }
         }
         return s
@@ -488,5 +490,13 @@ class DampLayout2D(
             i++
         }
         return res
+    }
+
+    private fun simIndexUpperTri(a: Int, b: Int): Int {
+        require(a <= b) { "Upper-triangular index expects a<=b (got a=$a, b=$b)" }
+        val aa = a.toLong()
+        val bb = b.toLong()
+        val idx = aa * n - aa * (aa - 1) / 2 + (bb - aa)
+        return idx.toInt()
     }
 }
