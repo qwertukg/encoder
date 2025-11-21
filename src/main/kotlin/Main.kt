@@ -97,15 +97,11 @@ fun main() {
         )
     }
     val sim1 = layout.jaccardSimilarity(
-        Proto(180.0, 16.0, 16.0),
-        Proto(180.0, 32.0, 16.0)
+        Proto(301.0, 16.0, 32.0),
+        Proto(97.0, 16.0, 16.0)
     )
-    val sim2 = layout.jaccardSimilarity(
-        Proto(360.0, 16.0, 16.0),
-        Proto(180.0, 32.0, 16.0)
-    )
+
     println("sim1 = $sim1")
-    println("sim2 = $sim2")
     println("CPU Layout finished! Total time: $cpuTime")
 
 }

@@ -472,13 +472,14 @@ class DampLayout2D(
                 if (id == -1) {
                     "" // пустая ячейка
                 } else {
-                    val angle = codes[id].first?.angle
-                    if (angle == null) {
-                        ""
-                    } else {
+                    val code = codes[id].first
+                    if (code == null) ""
+                    else {
+                        val angle = code.angle
+                        val x = code.x
+                        val y = code.y
                         // формат: angle;y;x
-                        val aStr = String.format(Locale.US, "%.1f", angle)
-                        "$aStr;$y;$x"
+                        "$angle;$y;$x"
                     }
                 }
             }

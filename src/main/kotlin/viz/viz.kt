@@ -1,17 +1,12 @@
 package viz
 
+import Proto
 import java.awt.*
 import javax.swing.*
 import kotlin.math.sqrt
 
-// одна ячейка: угол + две координаты (y,x), записанные logGridState как "angle;y;x"
-data class AnglePos(
-    val angleDeg: Double,
-    val row: Int,
-    val col: Int
-)
 
-private fun readAnglePosMatrix(anglesString: String): List<List<AnglePos?>> =
+private fun readAnglePosMatrix(anglesString: String): List<List<Proto?>> =
     anglesString
         .lines()
         .map { it.trimEnd() }
@@ -25,12 +20,12 @@ private fun readAnglePosMatrix(anglesString: String): List<List<AnglePos?>> =
                     } else {
                         val parts = s.split(';')
                         val angle = parts.getOrNull(0)?.trim()?.toDoubleOrNull()
-                        val row   = parts.getOrNull(1)?.trim()?.toIntOrNull()
-                        val col   = parts.getOrNull(2)?.trim()?.toIntOrNull()
-                        if (angle == null || row == null || col == null) {
+                        val x   = parts.getOrNull(1)?.trim()?.toDoubleOrNull()
+                        val y   = parts.getOrNull(2)?.trim()?.toDoubleOrNull()
+                        if (angle == null || x == null || y == null) {
                             null
                         } else {
-                            AnglePos(angle, row, col)
+                            Proto(angle, x, y)
                         }
                     }
                 }
@@ -52,7 +47,7 @@ fun showLayout(anglesString: String) {
 }
 
 class DotGrid(
-    private val ang: List<List<AnglePos?>>,
+    private val ang: List<List<Proto?>>,
     private val cell: Int
 ) : JPanel() {
 
@@ -75,16 +70,11 @@ class DotGrid(
             for (c in ang[r].indices) {
                 val cellVal = ang[r][c] ?: continue
 
-                val angleDeg = cellVal.angleDeg
+                val angleDeg = cellVal.angle
 
-                // нормализуем "позицию" из логов (row/col, которые писал layout)
-                val ny = cellVal.row.toFloat() / maxRow
-                val nx = cellVal.col.toFloat() / maxCol
+                val ny = cellVal.x.toFloat() / maxRow
+                val nx = cellVal.y.toFloat() / maxCol
 
-                // угло-позиция:
-                // - hue: угол
-                // - saturation: зависит от x
-                // - value: зависит от y (чем ближе к "верху", тем ярче)
                 val s = (0.5f + 0.5f * nx).coerceIn(0f, 1f)
                 val v = (0.5f + 0.5f * (1f - ny)).coerceIn(0f, 1f)
 
