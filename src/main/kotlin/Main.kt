@@ -81,8 +81,9 @@ fun main() {
     val emptyCodes: List<Pair<Proto?, IntArray>> = (0..100).map { null to IntArray(encoder.codeSizeInBits) }
 
     // CPU processing
+    val layout = DampLayout2D(codes + emptyCodes)
+
     val cpuTime = measureTime {
-        val layout = DampLayout2D(codes + emptyCodes)
 
         val outCPU = layout.layoutLongRange(
             farRadius = layout.gridSize / 2,
@@ -95,6 +96,16 @@ fun main() {
             log = true
         )
     }
+    val sim1 = layout.jaccardSimilarity(
+        Proto(180.0, 16.0, 16.0),
+        Proto(180.0, 32.0, 16.0)
+    )
+    val sim2 = layout.jaccardSimilarity(
+        Proto(360.0, 16.0, 16.0),
+        Proto(180.0, 32.0, 16.0)
+    )
+    println("sim1 = $sim1")
+    println("sim2 = $sim2")
     println("CPU Layout finished! Total time: $cpuTime")
 
 }
