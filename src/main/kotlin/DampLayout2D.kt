@@ -22,6 +22,12 @@ class DampLayout2D(
     private val n = codes.size
     val gridSize: Int = ceil(sqrt(n.toDouble())).toInt()
 
+    private val protoIndex: Map<Proto, Int> = buildMap {
+        codes.forEachIndexed { idx, (proto, _) ->
+            if (proto != null) put(proto, idx)
+        }
+    }
+
     // Решётка хранит индексы кодов или -1 (если ячейка пустая)
     private val grid: IntArray = IntArray(gridSize * gridSize) { -1 }
 
@@ -86,6 +92,17 @@ class DampLayout2D(
     }
 
     // ======================= ПУБЛИЧНЫЕ API =======================
+
+    /** Возвращает сходство Жаккара между кодами двух прототипов. */
+    fun jaccardSimilarity(protoA: Proto, protoB: Proto): Double {
+        val idxA = protoIndex[protoA]
+        val idxB = protoIndex[protoB]
+
+        require(idxA != null) { "Proto not found in layout: $protoA" }
+        require(idxB != null) { "Proto not found in layout: $protoB" }
+
+        return similarity(idxA, idxB)
+    }
 
     fun layoutLongRange(
         farRadius: Int,
