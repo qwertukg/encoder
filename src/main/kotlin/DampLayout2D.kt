@@ -1,6 +1,5 @@
 import viz.showLayout
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.pow
@@ -13,7 +12,6 @@ import kotlinx.coroutines.*
 // Тюнинговые константы
 private const val MAX_CAND_PER_FIRST = 16       // ограничение числа кандидатов per firstIndex
 private const val MAX_R_PER_DELTA     = 1000    // ограничение числа r в energyDelta
-private const val ENERGY_WORKERS_FRACTION = 0.5 // доля ядер под energyDelta-параллелизм
 
 class DampLayout2D(
     private val angleCodes: List<Pair<Double?, IntArray>>,
@@ -39,8 +37,12 @@ class DampLayout2D(
     // bitset-представление кодов: один LongArray на код
     private val bitCodes: Array<LongArray> = Array(n) { LongArray(wordsPerCode) }
 
-    // Ленивая кешируемая матрица сходств Жаккара (по единичным битам)
-    private val simCache = ConcurrentHashMap<Long, Double>()
+    // Плотная матрица сходств Жаккара: NaN -> ещё не считали
+    private val simMatrix: DoubleArray = DoubleArray(n * n) { Double.NaN }.also { matrix ->
+        for (i in 0 until n) {
+            matrix[i * n + i] = 1.0
+        }
+    }
 
     /**
      * Кеш смещений соседей по радиусу:
@@ -48,6 +50,9 @@ class DampLayout2D(
      * Это компактно: O(radius^2) на радиус, вместо O(gridSize^2 * radius^2).
      */
     private val neighborOffsetsCache: MutableMap<Int, IntArray> = mutableMapOf()
+
+    // Предварительно просчитанные кандидаты (radius -> Array[candidate indices per cell])
+    private val candidateCache: MutableMap<Int, Array<IntArray>> = mutableMapOf()
 
     private data class SwapProposal(val a: Int, val b: Int, val delta: Double)
 
@@ -183,7 +188,7 @@ class DampLayout2D(
                             val baseSim = similarity(iCode, jCode)
                             if (baseSim < minSim) continue
 
-                            val delta = energyDeltaAfterSwapParallel(
+                            val delta = energyDeltaAfterSwap(
                                 firstIndex = firstIndex,
                                 secondIndex = secondIndex,
                                 lambda = lambda,
@@ -233,21 +238,21 @@ class DampLayout2D(
     // ======================= ЭНЕРГИЯ/СХОДСТВО =======================
 
     /**
-     * Параллельная оценка Δ с сэмплированием r.
+     * Быстрая оценка Δ с сэмплированием r.
      * Если restrictRadius != null — используем только r в этом радиусе.
      * Иначе выбираем подмножество всех {0..n-1} размером <= MAX_R_PER_DELTA.
      */
-    private suspend fun energyDeltaAfterSwapParallel(
+    private fun energyDeltaAfterSwap(
         firstIndex: Int,
         secondIndex: Int,
         lambda: Double,
         eta: Double,
         restrictRadius: Int?,
         rnd: Random,
-    ): Double = coroutineScope {
+    ): Double {
         val iCode = grid[firstIndex]
         val jCode = grid[secondIndex]
-        if (iCode == -1 || jCode == -1) return@coroutineScope 0.0
+        if (iCode == -1 || jCode == -1) return 0.0
 
         val useLocal = restrictRadius != null
 
@@ -255,13 +260,13 @@ class DampLayout2D(
         val rCandidates: IntArray = if (useLocal) {
             val radius = restrictRadius
             ensureNeighbors(radius)
-            val offsets = neighborOffsetsCache[radius]
+            val neighbors = candidateCache[radius]
                 ?: error("Neighbor offsets not precomputed for radius=$radius")
 
             val set = HashSet<Int>()
 
-            localNeighbors(firstIndex, offsets).forEach { set += it }
-            localNeighbors(secondIndex, offsets).forEach { set += it }
+            neighbors[firstIndex].forEach { set += it }
+            neighbors[secondIndex].forEach { set += it }
 
             set.remove(firstIndex)
             set.remove(secondIndex)
@@ -278,48 +283,30 @@ class DampLayout2D(
             if (all.size > MAX_R_PER_DELTA) sampleIndices(all, MAX_R_PER_DELTA, rnd) else all
         }
 
-        if (rCandidates.isEmpty()) return@coroutineScope 0.0
+        if (rCandidates.isEmpty()) return 0.0
 
-        val totalWorkers = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
-        val workers = minOf(
-            (totalWorkers * ENERGY_WORKERS_FRACTION).toInt().coerceAtLeast(1),
-            rCandidates.size
-        )
-        val chunkSize = (rCandidates.size + workers - 1) / workers
+        var delta = 0.0
+        val r2Loc = restrictRadius?.toDouble()?.pow(2.0) ?: 0.0
+        for (idx in rCandidates.indices) {
+            val rIndex = rCandidates[idx]
+            val rCode = grid[rIndex]
+            if (rCode == -1) continue
 
-        val partial = (0 until workers).map { w ->
-            val from = w * chunkSize
-            if (from >= rCandidates.size) {
-                async(Dispatchers.Default) { 0.0 }
-            } else {
-                val to = minOf(from + chunkSize, rCandidates.size)
-                async(Dispatchers.Default) {
-                    var deltaPart = 0.0
-                    val r2Loc = restrictRadius?.toDouble()?.pow(2.0) ?: 0.0
-                    for (idx in from until to) {
-                        val rIndex = rCandidates[idx]
-                        val rCode = grid[rIndex]
-                        if (rCode == -1) continue
+            val d1 = dist2(firstIndex, rIndex)
+            val d2 = dist2(secondIndex, rIndex)
 
-                        val d1 = dist2(firstIndex, rIndex)
-                        val d2 = dist2(secondIndex, rIndex)
-
-                        if (useLocal) {
-                            val d1ok = d1 <= r2Loc
-                            val d2ok = d2 <= r2Loc
-                            if (!d1ok && !d2ok) continue
-                        }
-
-                        val s1 = tau(similarity(iCode, rCode), lambda, eta)
-                        val s2 = tau(similarity(jCode, rCode), lambda, eta)
-                        deltaPart += (s2 - s1) * (d1 - d2)
-                    }
-                    deltaPart
-                }
+            if (useLocal) {
+                val d1ok = d1 <= r2Loc
+                val d2ok = d2 <= r2Loc
+                if (!d1ok && !d2ok) continue
             }
+
+            val s1 = tau(similarity(iCode, rCode), lambda, eta)
+            val s2 = tau(similarity(jCode, rCode), lambda, eta)
+            delta += (s2 - s1) * (d1 - d2)
         }
 
-        partial.sumOf { it.await() }
+        return delta
     }
 
     private fun similarity(i: Int, j: Int): Double {
@@ -328,11 +315,18 @@ class DampLayout2D(
 
         val a = minOf(i, j)
         val b = maxOf(i, j)
-        val key = (a.toLong() shl 32) or (b.toLong() and 0xffffffffL)
+        val idx1 = a * n + b
+        val cached = simMatrix[idx1]
+        if (!cached.isNaN()) return cached
 
-        return simCache.computeIfAbsent(key) {
-            jaccardBit(bitCodes[a], bitCodes[b])
+        val s = jaccardBit(bitCodes[a], bitCodes[b])
+        synchronized(simMatrix) {
+            if (simMatrix[idx1].isNaN()) {
+                simMatrix[idx1] = s
+                simMatrix[b * n + a] = s
+            }
         }
+        return s
     }
 
     /** Жаккар по единичным битам для bitset-кодов. */
@@ -361,7 +355,9 @@ class DampLayout2D(
     private fun ensureNeighbors(radius: Int) {
         if (radius <= 0) return
         if (!neighborOffsetsCache.containsKey(radius)) {
-            neighborOffsetsCache[radius] = buildNeighborOffsets(radius)
+            val offsets = buildNeighborOffsets(radius)
+            neighborOffsetsCache[radius] = offsets
+            candidateCache[radius] = buildCandidateGrid(offsets)
         }
     }
 
@@ -387,66 +383,42 @@ class DampLayout2D(
 
     /**
      * Список кандидатов-клеток для firstIndex в радиусе radius.
-     * Строится на лету по смещениям, вместо хранения Array<IntArray> для всех ячеек.
+     * Теперь берём из заранее просчитанного кеша.
      */
     private fun candidateIndices(sourceIndex: Int, radius: Int): IntArray {
         if (radius <= 0) return IntArray(0)
-        val offsets = neighborOffsetsCache[radius]
+        val precomputed = candidateCache[radius]
             ?: error("Neighbor offsets not precomputed for radius=$radius (call ensureNeighbors first)")
-
-        val sy = ys[sourceIndex]
-        val sx = xs[sourceIndex]
-
-        val maxCount = offsets.size / 2
-        val res = IntArray(maxCount)
-        var count = 0
-
-        var i = 0
-        while (i < offsets.size) {
-            val dy = offsets[i]
-            val dx = offsets[i + 1]
-            i += 2
-
-            val ny = sy + dy
-            val nx = sx + dx
-            if (ny < 0 || ny >= gridSize || nx < 0 || nx >= gridSize) continue
-
-            val idx = ny * gridSize + nx
-            res[count++] = idx
-        }
-
-        return if (count == res.size) res else res.copyOf(count)
+        return precomputed[sourceIndex]
     }
 
-    /**
-     * Локальные соседи для центра centerIndex по уже готовым offsets (dy, dx).
-     * Используется при restrictRadius в energyDeltaAfterSwapParallel.
-     */
-    private fun localNeighbors(centerIndex: Int, offsets: IntArray): IntArray {
-        val cy = ys[centerIndex]
-        val cx = xs[centerIndex]
+    private fun buildCandidateGrid(offsets: IntArray): Array<IntArray> {
+        val res = Array(grid.size) { IntArray(0) }
+        for (cell in grid.indices) {
+            val sy = ys[cell]
+            val sx = xs[cell]
+            val maxCount = offsets.size / 2
+            val tmp = IntArray(maxCount)
+            var count = 0
 
-        val maxCount = offsets.size / 2
-        val res = IntArray(maxCount)
-        var count = 0
+            var i = 0
+            while (i < offsets.size) {
+                val dy = offsets[i]
+                val dx = offsets[i + 1]
+                i += 2
 
-        var i = 0
-        while (i < offsets.size) {
-            val dy = offsets[i]
-            val dx = offsets[i + 1]
-            i += 2
+                val ny = sy + dy
+                val nx = sx + dx
+                if (ny < 0 || ny >= gridSize || nx < 0 || nx >= gridSize) continue
 
-            val ny = cy + dy
-            val nx = cx + dx
-            if (ny < 0 || ny >= gridSize || nx < 0 || nx >= gridSize) continue
+                val idx = ny * gridSize + nx
+                if (idx == cell) continue
+                tmp[count++] = idx
+            }
 
-            val idx = ny * gridSize + nx
-            if (idx == centerIndex) continue
-
-            res[count++] = idx
+            res[cell] = if (count == tmp.size) tmp else tmp.copyOf(count)
         }
-
-        return if (count == res.size) res else res.copyOf(count)
+        return res
     }
 
     private fun dist2(aIndex: Int, bIndex: Int): Double {
