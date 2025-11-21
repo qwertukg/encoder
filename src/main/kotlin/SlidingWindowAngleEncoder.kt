@@ -63,8 +63,26 @@ class SlidingWindowAngleEncoder(
             ((domainMax - domainMin) / baseWidthUnits).roundToInt().coerceAtLeast(1)
     }
 
+    private data class PeriodicLayerGeometry(
+        val windowHalfWidth: Double,
+        val step: Double,
+        val offset: Double,
+        val detectorCount: Int,
+        val logicalOffset: Int,
+    )
+
+    private data class LinearLayerGeometry(
+        val domainMin: Double,
+        val domainMax: Double,
+        val windowHalfWidth: Double,
+        val step: Double,
+        val phaseShift: Double,
+        val detectorCount: Int,
+        val logicalOffset: Int,
+    )
+
     // --------- константы ---------
-    val twoPi: Double = 2.0 * PI
+    private val twoPi: Double = 2.0 * PI
     private val degreesToRadians: Double = PI / 180.0
 
     /** Общее число детекторов (ANG + X + Y) в логическом пространстве. */
@@ -79,10 +97,20 @@ class SlidingWindowAngleEncoder(
      */
     private val detectorToBitIndex: IntArray
 
+    /** Подготовленные параметры геометрии для угловых слоёв. */
+    private val angularGeometry: List<PeriodicLayerGeometry>
+
+    /** Подготовленные параметры геометрии для линейных слоёв X/Y. */
+    private val xGeometry: List<LinearLayerGeometry>
+    private val yGeometry: List<LinearLayerGeometry>
+
     /** Последний код (для отладки). */
     var lastEncodedCode: IntArray = IntArray(0); private set
 
     init {
+        validateAngleLayers(layers)
+        validateLinearLayersNonEmpty(xLayers, "X")
+        validateLinearLayersNonEmpty(yLayers, "Y")
         validateCodeSize(codeSizeInBits, layers, xLayers, yLayers)
 
         detectorToBitIndex = if (useRandomBitMapping) {
@@ -94,6 +122,10 @@ class SlidingWindowAngleEncoder(
         } else {
             IntArray(totalDetectorsCount) { it } // детектор d -> бит d
         }
+
+        angularGeometry = buildAngularGeometry(layers)
+        xGeometry = buildLinearGeometry(xLayers)
+        yGeometry = buildLinearGeometry(yLayers)
     }
 
     // ----------------- Публичное API -----------------
@@ -105,38 +137,10 @@ class SlidingWindowAngleEncoder(
             "codeSizeInBits=$codeSizeInBits меньше требуемых $totalBits бит"
         }
         val out = IntArray(codeSizeInBits)
-        var logicalOffset = 0 // смещение в логическом пространстве детекторов
 
-        // ---- ANGLE ----
-        if (layers.isNotEmpty()) {
-            var ang = angleInRadians % twoPi
-            if (ang < 0.0) ang += twoPi
-            val layerCount = layers.size
-            layers.forEachIndexed { idx, layer ->
-                val win = layer.arcLengthDegrees * (1.0 + layer.overlapFraction) * degreesToRadians
-                val half = win / 2.0
-                val step = layer.arcLengthDegrees * degreesToRadians
-                val phase = (idx.toDouble() / layerCount) * step
-                val offsetRad = layer.offsetDegrees * degreesToRadians
-                for (d in 0 until layer.detectorCount) {
-                    val center = d * step + phase + offsetRad
-                    val sRaw = center - half
-                    val eRaw = center + half
-                    var s = sRaw % twoPi; if (s < 0.0) s += twoPi
-                    var e = eRaw % twoPi; if (e < 0.0) e += twoPi
-                    val hit = if (s <= e) (ang >= s && ang < e) else (ang >= s || ang < e)
-                    if (hit) setDetectorBit(logicalOffset + d, out)
-                }
-                logicalOffset += layer.detectorCount
-            }
-        }
-
-        // ---- X ----
-        encodeLinear1D(xLayers, x, out, logicalOffset)
-        logicalOffset += xLayers.sumOf { it.detectorCount }
-
-        // ---- Y ----
-        encodeLinear1D(yLayers, y, out, logicalOffset)
+        encodeAngle(angleInRadians, out)
+        encodeLinear(x, xGeometry, out)
+        encodeLinear(y, yGeometry, out)
 
         lastEncodedCode = out
         return out
@@ -152,32 +156,89 @@ class SlidingWindowAngleEncoder(
         out[bitIndex] = 1
     }
 
-    private fun encodeLinear1D(
-        layers: List<LinearLayer>,
-        value: Double,
-        out: IntArray,
-        logicalBitOffset: Int
-    ) {
-        var logicalOffset = logicalBitOffset
-        val layerCount = layers.size
-        layers.forEachIndexed { idx, L ->
-            require(L.domainMax > L.domainMin) { "Некорректный домен линейного слоя: max<=min" }
-            val v = value.coerceIn(L.domainMin, L.domainMax)
-            val baseW = L.baseWidthUnits
-            val winW  = baseW * (1.0 + L.overlapFraction)
-            val halfW = winW / 2.0
-            val domainLen = L.domainMax - L.domainMin
-            val step = domainLen / L.detectorCount
-            val phase = (idx.toDouble() / layerCount) * step
-            for (d in 0 until L.detectorCount) {
-                val center = L.domainMin + d * step + phase
-                val s = center - halfW
-                val e = center + halfW
-                if (v >= s && v < e) {
-                    setDetectorBit(logicalOffset + d, out)
+    private fun encodeAngle(angleInRadians: Double, out: IntArray) {
+        if (angularGeometry.isEmpty()) return
+
+        var normalizedAngle = angleInRadians % twoPi
+        if (normalizedAngle < 0.0) normalizedAngle += twoPi
+
+        angularGeometry.forEach { geometry ->
+            repeat(geometry.detectorCount) { detectorIndex ->
+                val center = geometry.offset + detectorIndex * geometry.step
+                val startRaw = center - geometry.windowHalfWidth
+                var start = startRaw % twoPi; if (start < 0.0) start += twoPi
+                val endRaw = center + geometry.windowHalfWidth
+                var end = endRaw % twoPi; if (end < 0.0) end += twoPi
+
+                val hit = if (start <= end) {
+                    normalizedAngle >= start && normalizedAngle < end
+                } else {
+                    normalizedAngle >= start || normalizedAngle < end
+                }
+
+                if (hit) setDetectorBit(geometry.logicalOffset + detectorIndex, out)
+            }
+        }
+    }
+
+    private fun encodeLinear(value: Double, geometry: List<LinearLayerGeometry>, out: IntArray) {
+        if (geometry.isEmpty()) return
+
+        geometry.forEach { layer ->
+            val clamped = value.coerceIn(layer.domainMin, layer.domainMax)
+            repeat(layer.detectorCount) { detectorIndex ->
+                val center = layer.domainMin + detectorIndex * layer.step + layer.phaseShift
+                val start = center - layer.windowHalfWidth
+                val end = center + layer.windowHalfWidth
+
+                if (clamped >= start && clamped < end) {
+                    setDetectorBit(layer.logicalOffset + detectorIndex, out)
                 }
             }
-            logicalOffset += L.detectorCount
+        }
+    }
+
+    private fun buildAngularGeometry(layers: List<Layer>): List<PeriodicLayerGeometry> {
+        var logicalOffset = 0
+        val layerCount = layers.size.toDouble().takeIf { it > 0 } ?: return emptyList()
+
+        return layers.mapIndexed { idx, layer ->
+            val step = layer.arcLengthDegrees * degreesToRadians
+            val win = step * (1.0 + layer.overlapFraction)
+            val half = win / 2.0
+            val phase = (idx.toDouble() / layerCount) * step
+            val offset = phase + layer.offsetDegrees * degreesToRadians
+
+            PeriodicLayerGeometry(
+                windowHalfWidth = half,
+                step = step,
+                offset = offset,
+                detectorCount = layer.detectorCount,
+                logicalOffset = logicalOffset
+            ).also { logicalOffset += layer.detectorCount }
+        }
+    }
+
+    private fun buildLinearGeometry(layers: List<LinearLayer>): List<LinearLayerGeometry> {
+        var logicalOffset = 0
+        val layerCount = layers.size.toDouble().takeIf { it > 0 } ?: return emptyList()
+
+        return layers.mapIndexed { idx, layer ->
+            val winWidth = layer.baseWidthUnits * (1.0 + layer.overlapFraction)
+            val half = winWidth / 2.0
+            val domainLen = layer.domainMax - layer.domainMin
+            val step = domainLen / layer.detectorCount
+            val phase = (idx.toDouble() / layerCount) * step
+
+            LinearLayerGeometry(
+                domainMin = layer.domainMin,
+                domainMax = layer.domainMax,
+                windowHalfWidth = half,
+                step = step,
+                phaseShift = phase,
+                detectorCount = layer.detectorCount,
+                logicalOffset = logicalOffset
+            ).also { logicalOffset += layer.detectorCount }
         }
     }
 
