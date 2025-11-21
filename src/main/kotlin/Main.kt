@@ -22,6 +22,8 @@ fun main() {
             Layer(30.0),
             Layer(15.0),
             Layer(5.0),
+//            Layer(2.5),
+//            Layer(1.0),
         ),
         // ---- X конфигурации ----
         listOf(
@@ -43,7 +45,7 @@ fun main() {
             LinearLayer(baseWidthUnits = 16.0, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
 //            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
         ),
-        useRandomBitMapping = false,
+        useRandomBitMapping = true,
 //        codeSizeInBits = 256
 
     )
@@ -101,6 +103,12 @@ fun main() {
         Proto(107.0, 16.0, 16.0)
     )
     println("sim1 = $sim1")
+
+    val sim2 = layout.jaccardSimilarity(
+        Proto(96.0, 16.0, 16.0),
+        Proto(102.0, 16.0, 16.0)
+    )
+    println("sim2 = $sim2")
 
     println("CPU Layout finished! Total time: $cpuTime")
 
