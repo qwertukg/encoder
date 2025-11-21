@@ -478,8 +478,7 @@ class DampLayout2D(
                         val angle = code.angle
                         val x = code.x
                         val y = code.y
-                        // формат: angle;y;x
-                        "$angle;$y;$x"
+                        "$angle;$x;$y"
                     }
                 }
             }
