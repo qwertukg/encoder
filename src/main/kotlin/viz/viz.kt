@@ -1,9 +1,9 @@
 package viz
 
+import DampLayout2D
 import Proto
 import java.awt.*
 import javax.swing.*
-import kotlin.math.sqrt
 
 
 private fun readAnglePosMatrix(anglesString: String): List<List<Proto?>> =
@@ -33,12 +33,12 @@ private fun readAnglePosMatrix(anglesString: String): List<List<Proto?>> =
 
 val frame = JFrame("Angle-position layout")
 
-fun showLayout(anglesString: String) {
+fun showLayout(anglesString: String, layout: DampLayout2D) {
     val matrix = readAnglePosMatrix(anglesString)
     SwingUtilities.invokeLater {
         frame.apply {
             defaultCloseOperation = JFrame.EXIT_ON_CLOSE
-            contentPane = JScrollPane(DotGrid(matrix, 5))
+            contentPane = JScrollPane(DotGrid(matrix, 20, layout))
             pack()
             setLocationRelativeTo(null)
             isVisible = true
@@ -47,12 +47,13 @@ fun showLayout(anglesString: String) {
 }
 
 class DotGrid(
-    private val ang: List<List<Proto?>>,
-    private val cell: Int
+    private val proto: List<List<Proto?>>,
+    private val cell: Int,
+    private val layout: DampLayout2D
 ) : JPanel() {
 
     init {
-        preferredSize = Dimension(ang.first().size * cell, ang.size * cell)
+        preferredSize = Dimension(proto.first().size * cell, proto.size * cell)
         background = Color.BLACK
     }
 
@@ -61,33 +62,31 @@ class DotGrid(
         val g2 = g as Graphics2D
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
-        if (ang.isEmpty() || ang.first().isEmpty()) return
+        if (proto.isEmpty() || proto.first().isEmpty()) return
 
-        val maxRow = (ang.size - 1).coerceAtLeast(1)
-        val maxCol = (ang.first().size - 1).coerceAtLeast(1)
+        for (r in proto.indices) {
+            for (c in proto[r].indices) {
+                val cellVal = proto[r][c] ?: continue
 
-        for (r in ang.indices) {
-            for (c in ang[r].indices) {
-                val cellVal = ang[r][c] ?: continue
-
-                val angleDeg = cellVal.angle
-
-                val ny = cellVal.x.toFloat() / maxRow
-                val nx = cellVal.y.toFloat() / maxCol
-
-                val s = (0.5f + 0.5f * nx).coerceIn(0f, 1f)
-                val v = (0.5f + 0.5f * (1f - ny)).coerceIn(0f, 1f)
+                val angle = cellVal.angle
+                val a = angle.toInt()
+                val x = cellVal.x.toInt()
+                val y = cellVal.y.toInt()
 
                 val cx = c * cell
                 val cy = r * cell
 
-                g2.color = colorForAngle(angleDeg, s, v)
+                g2.color = colorForAngle(angle)
                 g2.fillRect(cx, cy, cell, cell)
+                g2.color = Color.BLACK
+                g2.font = g2.font.deriveFont(6f)
+                g2.drawString("$a", cx , cy + cell/2)
+                g2.drawString("$x:$y", cx , cy + cell - 3)
             }
         }
     }
 
-    private fun colorForAngle(deg: Double, s: Float = 0.9f, v: Float = 0.95f): Color {
+    private fun colorForAngle(deg: Double): Color {
         val d = ((deg % 360.0) + 360.0) % 360.0
         val hue = (d / 360.0).toFloat()
         return Color.getHSBColor(hue, 1f, 1f)

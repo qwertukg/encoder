@@ -122,7 +122,7 @@ class DampLayout2D(
 
         if (log) {
             val csv = logGridState(epoch = -1, tag = "start")
-            showLayout(csv)
+            showLayout(csv, this)
         }
 
         repeat(epochs.coerceAtLeast(0)) { e ->
@@ -148,7 +148,7 @@ class DampLayout2D(
             if (log) {
                 println("long-range epoch=${e + 1}  lambda=%.3f  duration=%s".format(lam, dt))
                 val csv = logGridState(epoch = e, tag = "long")
-                showLayout(csv)
+                showLayout(csv, this)
             }
         }
         return buildCoordinateMap()
