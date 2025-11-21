@@ -14,12 +14,12 @@ private const val MAX_CAND_PER_FIRST = 16       // ограничение чис
 private const val MAX_R_PER_DELTA     = 1000    // ограничение числа r в energyDelta
 
 class DampLayout2D(
-    private val angleCodes: List<Pair<Double?, IntArray>>,
+    private val codes: List<Pair<Double?, IntArray>>,
     randomizeStart: Boolean = true,
     seed: Int = 42,
 ) {
     private val rng = Random(seed)
-    private val n = angleCodes.size
+    private val n = codes.size
     val gridSize: Int = ceil(sqrt(n.toDouble())).toInt()
 
     // Решётка хранит индексы кодов или -1 (если ячейка пустая)
@@ -30,7 +30,7 @@ class DampLayout2D(
     private val xs: IntArray = IntArray(grid.size) { it % gridSize }
 
     // длина кодового слова в битах
-    private val codeBitLength: Int = angleCodes.maxOfOrNull { it.second.size } ?: 0
+    private val codeBitLength: Int = codes.maxOfOrNull { it.second.size } ?: 0
     private val wordsPerCode: Int =
         if (codeBitLength == 0) 0 else (codeBitLength + 63) / 64
 
@@ -63,7 +63,7 @@ class DampLayout2D(
         // bitset-представление
         if (wordsPerCode > 0) {
             for (idx in 0 until n) {
-                val src = angleCodes[idx].second
+                val src = codes[idx].second
                 val dst = bitCodes[idx]
                 var k = 0
                 while (k < src.size) {
@@ -438,7 +438,7 @@ class DampLayout2D(
         val res = MutableList<Triple<Double?, Int, Int>>(n) { Triple(0.0, 0, 0) }
         grid.forEachIndexed { idx, codeIndex ->
             if (codeIndex == -1) return@forEachIndexed
-            val (angle, _) = angleCodes[codeIndex]
+            val (angle, _) = codes[codeIndex]
             val (y, x) = toCoord(idx)
             res[codeIndex] = Triple(angle, y, x)
         }
@@ -455,7 +455,7 @@ class DampLayout2D(
                 if (id == -1) {
                     "" // пустая ячейка
                 } else {
-                    val angle = angleCodes[id].first
+                    val angle = codes[id].first
                     if (angle == null) {
                         ""
                     } else {

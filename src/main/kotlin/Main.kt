@@ -81,7 +81,7 @@ fun main() {
 
     // CPU processing
     val cpuTime = measureTime {
-        val layout = DampLayout2D(angleCodes = codes + emptyCodes)
+        val layout = DampLayout2D(codes + emptyCodes)
 
         val outCPU = layout.layoutLongRange(
             farRadius = layout.gridSize / 2,
