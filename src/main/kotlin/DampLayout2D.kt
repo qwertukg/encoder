@@ -22,7 +22,7 @@ class DampLayout2D(
 ) {
     private val rng = Random(seed)
     private val n = angleCodes.size
-    private val gridSize: Int = ceil(sqrt(n.toDouble())).toInt()
+    val gridSize: Int = ceil(sqrt(n.toDouble())).toInt()
 
     // Решётка хранит индексы кодов или -1 (если ячейка пустая)
     private val grid: IntArray = IntArray(gridSize * gridSize) { -1 }
@@ -253,7 +253,7 @@ class DampLayout2D(
 
         // Формируем список r-кандидатов для оценки
         val rCandidates: IntArray = if (useLocal) {
-            val radius = restrictRadius!!
+            val radius = restrictRadius
             ensureNeighbors(radius)
             val offsets = neighborOffsetsCache[radius]
                 ?: error("Neighbor offsets not precomputed for radius=$radius")

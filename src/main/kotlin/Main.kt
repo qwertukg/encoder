@@ -1,7 +1,7 @@
-import kotlin.math.PI
-import SlidingWindowAngleEncoder.Layer
 import SlidingWindowAngleEncoder.LinearLayer
+import SlidingWindowAngleEncoder.Layer
 import java.lang.Math.toRadians
+import kotlin.math.sqrt
 import kotlin.time.measureTime
 
 fun main() {
@@ -10,9 +10,9 @@ fun main() {
     val a0 = 0.0
     val aN = 360.0
     val x0 = 0.0
-    val xN = 50.0
+    val xN = 32.0
     val y0 = 0.0
-    val yN = 50.0
+    val yN = 32.0
 
     val encoder = SlidingWindowAngleEncoder(
         // ---- ANGLE конфигурация ----
@@ -25,6 +25,7 @@ fun main() {
         ),
         // ---- X конфигурации ----
         listOf(
+            LinearLayer(baseWidthUnits = 0.5,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
             LinearLayer(baseWidthUnits = 1.0,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
             LinearLayer(baseWidthUnits = 2.0,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
             LinearLayer(baseWidthUnits = 4.0,  overlapFraction = 0.4, domainMin = x0, domainMax = xN),
@@ -34,6 +35,7 @@ fun main() {
         ),
         // ---- Y конфигурации ----
         listOf(
+            LinearLayer(baseWidthUnits = 0.5,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
             LinearLayer(baseWidthUnits = 1.0,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
             LinearLayer(baseWidthUnits = 2.0,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
             LinearLayer(baseWidthUnits = 4.0,  overlapFraction = 0.4, domainMin = y0, domainMax = yN),
@@ -41,8 +43,8 @@ fun main() {
             LinearLayer(baseWidthUnits = 16.0, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
 //            LinearLayer(baseWidthUnits = 32.0, overlapFraction = 0.4, domainMin = y0, domainMax = yN),
         ),
-        315,
-        true,
+        useRandomBitMapping = false,
+//        codeSizeInBits = 256
 
     )
 
@@ -50,15 +52,15 @@ fun main() {
     val codes = mutableListOf<Pair<Double, IntArray>>()
     var a = a0
     while (a < aN) {
-        a += 10.0
+        a += 1.0
 
         var x = x0
         while (x < xN) {
-            x += 10.0
+            x += 16.0
 
             var y = y0
             while (y < yN) {
-                y += 10.0
+                y += 16.0
 
                 val angleRad = toRadians(a)
                 val code = encoder.encode(angleRad, x, y)
@@ -75,17 +77,16 @@ fun main() {
 //    showSimilarityCurve(matrix, 0.0)
 
 
-    val emptyCodes: List<Pair<Double?, IntArray>> = (0..300).map { null to IntArray(encoder.codeSizeInBits) }
+    val emptyCodes: List<Pair<Double?, IntArray>> = (0..100).map { null to IntArray(encoder.codeSizeInBits) }
 
     // CPU processing
     val cpuTime = measureTime {
-        val c = (codes + emptyCodes).shuffled()
         val layout = DampLayout2D(angleCodes = codes + emptyCodes)
 
         val outCPU = layout.layoutLongRange(
-            farRadius = 15,
+            farRadius = layout.gridSize / 2,
             epochs = 100,
-            minSim = 0.00,
+            minSim = 0.0,
             lambdaStart = 0.30,
             lambdaEnd = 0.90,
             eta = 0.0,
