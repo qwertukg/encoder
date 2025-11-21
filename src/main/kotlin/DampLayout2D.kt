@@ -8,6 +8,7 @@ import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.measureTime
 import kotlinx.coroutines.*
+import kotlin.math.abs
 
 // Тюнинговые константы
 private const val MAX_CAND_PER_FIRST = 16       // ограничение числа кандидатов per firstIndex
@@ -205,7 +206,7 @@ class DampLayout2D(
                             val jCode = grid[secondIndex]
                             if (jCode == -1) continue
 
-                            val baseSim = similarity(iCode, jCode)
+                            val baseSim = similarityProto(iCode, jCode)
                             if (baseSim < minSim) continue
 
                             val delta = energyDeltaAfterSwap(
@@ -321,15 +322,15 @@ class DampLayout2D(
                 if (!d1ok && !d2ok) continue
             }
 
-            val s1 = tau(similarity(iCode, rCode), lambda, eta)
-            val s2 = tau(similarity(jCode, rCode), lambda, eta)
+            val s1 = tau(similarityProto(iCode, rCode), lambda, eta)
+            val s2 = tau(similarityProto(jCode, rCode), lambda, eta)
             delta += (s2 - s1) * (d1 - d2)
         }
 
         return delta
     }
 
-    private fun similarity(i: Int, j: Int, isJaccard: Boolean = true): Double {
+    private fun similarity(i: Int, j: Int, isJaccard: Boolean = false): Double {
         if (i == j) return 1.0
         if (wordsPerCode == 0) return 0.0
 
@@ -536,5 +537,59 @@ class DampLayout2D(
         val bb = b.toLong()
         val idx = aa * n - aa * (aa - 1) / 2 + (bb - aa)
         return idx.toInt()
+    }
+
+    private val maxPosDist: Double = run {
+        val xs = codes.mapNotNull { it.first?.x }
+        val ys = codes.mapNotNull { it.first?.y }
+        if (xs.isEmpty() || ys.isEmpty()) {
+            0.0
+        } else {
+            val minX = xs.minOrNull()!!
+            val maxX = xs.maxOrNull()!!
+            val minY = ys.minOrNull()!!
+            val maxY = ys.maxOrNull()!!
+            val dx = maxX - minX
+            val dy = maxY - minY
+            sqrt(dx * dx + dy * dy)
+        }
+    }
+
+    // ======================= НОВОЕ: ОРАКУЛ ПО ПРОТОТИПАМ =======================
+    private val angleWeight: Double = 0.3
+    private val posWeight: Double   = 0.7
+    private fun similarityProto(i: Int, j: Int): Double {
+        if (i == j) return 1.0
+
+        val pa = codes[i].first ?: return 0.0
+        val pb = codes[j].first ?: return 0.0
+
+        // --- угловая близость ---
+        val diff = abs(pa.angle - pb.angle) % 360.0
+        val d = if (diff > 180.0) 360.0 - diff else diff
+        val sAng = 1.0 - (d / 180.0)
+
+        // --- позиционная близость ---
+        val sPos =
+            if (maxPosDist <= 0.0) {
+                1.0
+            } else {
+                val dx = pa.x - pb.x
+                val dy = pa.y - pb.y
+                val dist = sqrt(dx * dx + dy * dy)
+                val norm = (dist / maxPosDist).coerceIn(0.0, 1.0)
+                1.0 - norm
+            }
+
+        // --- взвешенная смесь компонентов ---
+        val wAng = angleWeight
+        val wPos = posWeight
+        val wSum = wAng + wPos
+
+        return if (wSum == 0.0) {
+            0.0
+        } else {
+            (sAng * wAng + sPos * wPos) / wSum
+        }
     }
 }

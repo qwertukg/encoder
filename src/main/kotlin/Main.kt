@@ -80,7 +80,7 @@ fun main() {
 //    showSimilarityCurve(matrix, 0.0)
 
 
-    val emptyCodes: List<Pair<Proto?, IntArray>> = (0..100).map { null to IntArray(encoder.codeSizeInBits) }
+    val emptyCodes: List<Pair<Proto?, IntArray>> = (0..500).map { null to IntArray(encoder.codeSizeInBits) }
 
     // CPU processing
     val layout = DampLayout2D(codes + emptyCodes)
