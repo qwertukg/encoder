@@ -65,7 +65,7 @@ fun main() {
                 val angleRad = toRadians(a)
                 val code = encoder.encode(angleRad, x, y)
                 println("$a:$x:$y\t" + code.joinToString("", "[", "]"))
-                val proto = Proto(angle = a, x = x.toInt(), y = y.toInt())
+                val proto = Proto(angle = a, x = x, y = y)
                 codes += proto to code
             }
         }
