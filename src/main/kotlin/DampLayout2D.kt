@@ -329,7 +329,7 @@ class DampLayout2D(
         return delta
     }
 
-    private fun similarity(i: Int, j: Int): Double {
+    private fun similarity(i: Int, j: Int, isJaccard: Boolean = true): Double {
         if (i == j) return 1.0
         if (wordsPerCode == 0) return 0.0
 
@@ -339,8 +339,9 @@ class DampLayout2D(
         val cached = simMatrix[idx1]
         if (!cached.isNaN()) return cached.toDouble()
 
-        val s = jaccardBit(bitCodes[a], bitCodes[b])
-//        val s = cosineBit(bitCodes[a], bitCodes[b])
+        val s = if (isJaccard) jaccardBit(bitCodes[a], bitCodes[b])
+        else cosineBit(bitCodes[a], bitCodes[b])
+
         synchronized(simMatrix) {
             if (simMatrix[idx1].isNaN()) {
                 simMatrix[idx1] = s.toFloat()
@@ -385,7 +386,7 @@ class DampLayout2D(
     }
 
     private fun tau(x: Double, lambda: Double, eta: Double): Double {
-        val sig = if (eta == 0.0) 1.0 else 1.0 / (1.0 + exp(-eta * (x - lambda)))
+        val sig = 1.0 / (1.0 + exp(-eta * (x - lambda)))
         return x * sig
     }
 
