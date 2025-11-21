@@ -340,6 +340,7 @@ class DampLayout2D(
         if (!cached.isNaN()) return cached.toDouble()
 
         val s = jaccardBit(bitCodes[a], bitCodes[b])
+//        val s = cosineBit(bitCodes[a], bitCodes[b])
         synchronized(simMatrix) {
             if (simMatrix[idx1].isNaN()) {
                 simMatrix[idx1] = s.toFloat()
@@ -362,6 +363,25 @@ class DampLayout2D(
         }
         if (uni == 0) return 0.0
         return inter.toDouble() / uni.toDouble()
+    }
+
+    private fun cosineBit(a: LongArray, b: LongArray): Double {
+        var inter = 0      // |a ∩ b|
+        var cntA  = 0      // |a|
+        var cntB  = 0      // |b|
+
+        for (i in a.indices) {
+            val aw = a[i]
+            val bw = b[i]
+
+            inter += (aw and bw).countOneBits()
+            cntA  += aw.countOneBits()
+            cntB  += bw.countOneBits()
+        }
+
+        if (cntA == 0 || cntB == 0) return 0.0
+
+        return inter.toDouble() / sqrt(cntA.toDouble() * cntB.toDouble())
     }
 
     private fun tau(x: Double, lambda: Double, eta: Double): Double {
