@@ -1,5 +1,5 @@
 import viz.showLayout
-import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.pow
@@ -8,7 +8,6 @@ import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.measureTime
 import kotlinx.coroutines.*
-import kotlin.math.abs
 
 // Тюнинговые константы
 private const val MAX_CAND_PER_FIRST = 16       // ограничение числа кандидатов per firstIndex
@@ -18,6 +17,39 @@ class DampLayout2D(
     private val codes: List<Pair<Proto?, IntArray>>,
     randomizeStart: Boolean = true,
     seed: Int = 42,
+
+    /**
+     * Максимальная угловая разница, после которой simAng = 0
+     * (жёсткий обрезающий порог, поверх гауссовской σ).
+     */
+    private val maxAngleDeg: Double = 180.0,
+
+    /**
+     * Доля от диагонали пространства, после которой simPos = 0
+     * (жёсткий обрезающий порог, поверх гауссовской σ).
+     */
+    private val posRangeFrac: Double = 1.0,
+
+    /**
+     * Вес угловой компоненты (степень, в которую возводим sAng).
+     */
+    private val angleWeight: Double = 0.25,
+
+    /**
+     * Вес позиционной компоненты (степень, в которую возводим sPos).
+     */
+    private val posWeight: Double   = 0.5,
+
+    /**
+     * σ по углу (в градусах) для гауссовской компоненты.
+     */
+    private val sigmaAngleDeg: Double = 30.0,
+
+    /**
+     * σ по позиции (в тех же единицах, что и proto.x / proto.y).
+     * Для твоих прототипов подобранное значение ~24 даёт sim(0°,16,16 / 0°,32,32) ≈ 0.607.
+     */
+    private val sigmaPos: Double = 24.0,
 ) {
     private val rng = Random(seed)
     private val n = codes.size
@@ -28,6 +60,10 @@ class DampLayout2D(
             if (proto != null) put(proto, idx)
         }
     }
+
+    // ---- геометрия прототипов для позиционной метрики ----
+    private val maxPosDist: Double
+    private val posCutoff: Double
 
     // Решётка хранит индексы кодов или -1 (если ячейка пустая)
     private val grid: IntArray = IntArray(gridSize * gridSize) { -1 }
@@ -57,7 +93,6 @@ class DampLayout2D(
     /**
      * Кеш смещений соседей по радиусу:
      * radius -> IntArray [dy0, dx0, dy1, dx1, ...].
-     * Это компактно: O(radius^2) на радиус, вместо O(gridSize^2 * radius^2).
      */
     private val neighborOffsetsCache: MutableMap<Int, IntArray> = mutableMapOf()
 
@@ -67,6 +102,22 @@ class DampLayout2D(
     private data class SwapProposal(val a: Int, val b: Int, val delta: Double)
 
     init {
+        // ---- геометрия прототипов: диагональ и порог позиции ----
+        val xsAll = codes.mapNotNull { it.first?.x }
+        val ysAll = codes.mapNotNull { it.first?.y }
+        if (xsAll.isNotEmpty() && ysAll.isNotEmpty()) {
+            val minX = xsAll.minOrNull()!!
+            val maxX = xsAll.maxOrNull()!!
+            val minY = ysAll.minOrNull()!!
+            val maxY = ysAll.maxOrNull()!!
+            val dx = maxX - minX
+            val dy = maxY - minY
+            maxPosDist = sqrt(dx * dx + dy * dy)
+        } else {
+            maxPosDist = 0.0
+        }
+        posCutoff = maxPosDist * posRangeFrac
+
         // bitset-представление
         if (wordsPerCode > 0) {
             for (idx in 0 until n) {
@@ -94,7 +145,7 @@ class DampLayout2D(
 
     // ======================= ПУБЛИЧНЫЕ API =======================
 
-    /** Возвращает сходство Жаккара между кодами двух прототипов. */
+    /** Сходство по кодам (Жаккар) между кодами двух прототипов. */
     fun jaccardSimilarity(protoA: Proto, protoB: Proto): Double {
         val idxA = protoIndex[protoA]
         val idxB = protoIndex[protoB]
@@ -103,6 +154,15 @@ class DampLayout2D(
         require(idxB != null) { "Proto not found in layout: $protoB" }
 
         return similarity(idxA, idxB)
+    }
+
+    /** Аналитическая близость по (угол, позиция) между двумя прототипами. */
+    fun analyticSimilarity(protoA: Proto, protoB: Proto): Double {
+        val idxA = protoIndex[protoA]
+        val idxB = protoIndex[protoB]
+        require(idxA != null) { "Proto not found in layout: $protoA" }
+        require(idxB != null) { "Proto not found in layout: $protoB" }
+        return similarityProto(idxA, idxB)
     }
 
     fun layoutLongRange(
@@ -121,10 +181,7 @@ class DampLayout2D(
 
         ensureNeighbors(farRadius)
 
-        if (log) {
-            val csv = logGridState(epoch = -1, tag = "start")
-            showLayout(csv, this)
-        }
+        var lastCsv: String? = null
 
         repeat(epochs.coerceAtLeast(0)) { e ->
             val lam = lerp(
@@ -141,17 +198,27 @@ class DampLayout2D(
                         eta = eta,
                         minSim = minSim,
                         maxBatchFrac = maxBatchFrac,
-                        localEnergyRadius = forceLocalEnergyRadius, // null = глобально, иначе — локально
+                        localEnergyRadius = forceLocalEnergyRadius,
                     )
                 }
             }
 
             if (log) {
-                println("long-range epoch=${e + 1}  lambda=%.3f  duration=%s".format(lam, dt))
-                val csv = logGridState(epoch = e, tag = "long")
-                showLayout(csv, this)
+                // короткий лог по эпохе
+                //println("long-range epoch=${e + 1}  lambda=%.3f  duration=%s".format(lam, dt))
+
+                // CSV-раскладка только для последней эпохи
+                if (e == epochs - 1) {
+                    lastCsv = logGridState(epoch = e, tag = "long")
+                }
             }
         }
+
+        // показываем только финальную раскладку
+        if (log && lastCsv != null) {
+            showLayout(lastCsv, this)
+        }
+
         return buildCoordinateMap()
     }
 
@@ -206,7 +273,9 @@ class DampLayout2D(
                             val jCode = grid[secondIndex]
                             if (jCode == -1) continue
 
+                            // ВНИМАНИЕ: здесь используем аналитическую (угол+позиция) метрику.
                             val baseSim = similarityProto(iCode, jCode)
+
                             if (baseSim < minSim) continue
 
                             val delta = energyDeltaAfterSwap(
@@ -324,13 +393,15 @@ class DampLayout2D(
 
             val s1 = tau(similarityProto(iCode, rCode), lambda, eta)
             val s2 = tau(similarityProto(jCode, rCode), lambda, eta)
+
             delta += (s2 - s1) * (d1 - d2)
         }
 
         return delta
     }
 
-    private fun similarity(i: Int, j: Int, isJaccard: Boolean = false): Double {
+    // ---- кодовая близость по битам ----
+    private fun similarity(i: Int, j: Int): Double {
         if (i == j) return 1.0
         if (wordsPerCode == 0) return 0.0
 
@@ -340,15 +411,35 @@ class DampLayout2D(
         val cached = simMatrix[idx1]
         if (!cached.isNaN()) return cached.toDouble()
 
-        val s = if (isJaccard) jaccardBit(bitCodes[a], bitCodes[b])
-        else cosineBit(bitCodes[a], bitCodes[b])
-
+        val s = jaccardBit(bitCodes[a], bitCodes[b])
+//      val s = cosineBit(bitCodes[a], bitCodes[b])
         synchronized(simMatrix) {
             if (simMatrix[idx1].isNaN()) {
                 simMatrix[idx1] = s.toFloat()
             }
         }
         return s
+    }
+
+    // ---- АНАЛИТИЧЕСКАЯ БЛИЗОСТЬ: угол * позиция (ГАУССЫ) ----
+    private fun similarityProto(i: Int, j: Int): Double {
+        if (i == j) return 1.0
+
+        val p1 = codes[i].first ?: return 0.0
+        val p2 = codes[j].first ?: return 0.0
+
+        val diffDeg = angularDiffDegrees(p1.angle, p2.angle)
+        val sAng    = angularComponent(diffDeg)
+
+        val dist    = posDistance(p1, p2)
+        val sPos    = positionalComponent(dist)
+
+        if (sAng <= 0.0 || sPos <= 0.0) return 0.0
+
+        val sAngW = sAng.pow(angleWeight)
+        val sPosW = sPos.pow(posWeight)
+
+        return sAngW * sPosW
     }
 
     /** Жаккар по единичным битам для bitset-кодов. */
@@ -387,8 +478,37 @@ class DampLayout2D(
     }
 
     private fun tau(x: Double, lambda: Double, eta: Double): Double {
-        val sig = 1.0 / (1.0 + exp(-eta * (x - lambda)))
+        val sig = if (eta == 0.0) 1.0 else 1.0 / (1.0 + exp(-eta * (x - lambda)))
         return x * sig
+    }
+
+    // ---- компоненты аналитической метрики ----
+
+    private fun angularDiffDegrees(a1: Double, a2: Double): Double {
+        val raw = abs(a1 - a2) % 360.0
+        return if (raw > 180.0) 360.0 - raw else raw
+    }
+
+    private fun angularComponent(diffDeg: Double): Double {
+        if (sigmaAngleDeg <= 0.0) return 0.0
+        // жёсткий порог по углу, если задан
+        if (maxAngleDeg > 0.0 && diffDeg >= maxAngleDeg) return 0.0
+        val z = diffDeg / sigmaAngleDeg
+        return exp(-0.5 * z * z)
+    }
+
+    private fun posDistance(a: Proto, b: Proto): Double {
+        val dx = a.x - b.x
+        val dy = a.y - b.y
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    private fun positionalComponent(dist: Double): Double {
+        if (sigmaPos <= 0.0) return 0.0
+        // жёсткий порог по позиции, если задан
+        if (posCutoff > 0.0 && dist >= posCutoff) return 0.0
+        val z = dist / sigmaPos
+        return exp(-0.5 * z * z)
     }
 
     // ======================= ГЕОМЕТРИЯ/УТИЛИТЫ =======================
@@ -424,7 +544,7 @@ class DampLayout2D(
 
     /**
      * Список кандидатов-клеток для firstIndex в радиусе radius.
-     * Теперь берём из заранее просчитанного кеша.
+     * Берём из заранее просчитанного кеша.
      */
     private fun candidateIndices(sourceIndex: Int, radius: Int): IntArray {
         if (radius <= 0) return IntArray(0)
@@ -498,9 +618,9 @@ class DampLayout2D(
                     if (code == null) ""
                     else {
                         val angle = code.angle
-                        val x = code.x
-                        val y = code.y
-                        "$angle;$x;$y"
+                        val px = code.x
+                        val py = code.y
+                        "$angle;$px;$py"
                     }
                 }
             }
@@ -508,6 +628,13 @@ class DampLayout2D(
         }
         val txt = sb.toString().trimEnd()
         println("Эпоха ${epoch + 1} [$tag]:\n$txt\n")
+        println(
+            "maxAngleDeg = $maxAngleDeg, " +
+                    "posRangeFrac = $posRangeFrac, " +
+                    "sigmaAngleDeg = $sigmaAngleDeg, " +
+                    "sigmaPos = $sigmaPos, " +
+                    "angleWeight = $angleWeight, posWeight = $posWeight"
+        )
         return txt
     }
 
@@ -523,7 +650,6 @@ class DampLayout2D(
         while (i < k) {
             val j = rnd.nextInt(size)
             res[i] = tmp[j]
-            // ставим выбранный в конец и уменьшаем "активный" размер
             tmp[j] = tmp[size - 1]
             size--
             i++
@@ -537,59 +663,5 @@ class DampLayout2D(
         val bb = b.toLong()
         val idx = aa * n - aa * (aa - 1) / 2 + (bb - aa)
         return idx.toInt()
-    }
-
-    private val maxPosDist: Double = run {
-        val xs = codes.mapNotNull { it.first?.x }
-        val ys = codes.mapNotNull { it.first?.y }
-        if (xs.isEmpty() || ys.isEmpty()) {
-            0.0
-        } else {
-            val minX = xs.minOrNull()!!
-            val maxX = xs.maxOrNull()!!
-            val minY = ys.minOrNull()!!
-            val maxY = ys.maxOrNull()!!
-            val dx = maxX - minX
-            val dy = maxY - minY
-            sqrt(dx * dx + dy * dy)
-        }
-    }
-
-    // ======================= НОВОЕ: ОРАКУЛ ПО ПРОТОТИПАМ =======================
-    private val angleWeight: Double = 0.3
-    private val posWeight: Double   = 0.7
-    private fun similarityProto(i: Int, j: Int): Double {
-        if (i == j) return 1.0
-
-        val pa = codes[i].first ?: return 0.0
-        val pb = codes[j].first ?: return 0.0
-
-        // --- угловая близость ---
-        val diff = abs(pa.angle - pb.angle) % 360.0
-        val d = if (diff > 180.0) 360.0 - diff else diff
-        val sAng = 1.0 - (d / 180.0)
-
-        // --- позиционная близость ---
-        val sPos =
-            if (maxPosDist <= 0.0) {
-                1.0
-            } else {
-                val dx = pa.x - pb.x
-                val dy = pa.y - pb.y
-                val dist = sqrt(dx * dx + dy * dy)
-                val norm = (dist / maxPosDist).coerceIn(0.0, 1.0)
-                1.0 - norm
-            }
-
-        // --- взвешенная смесь компонентов ---
-        val wAng = angleWeight
-        val wPos = posWeight
-        val wSum = wAng + wPos
-
-        return if (wSum == 0.0) {
-            0.0
-        } else {
-            (sAng * wAng + sPos * wPos) / wSum
-        }
     }
 }
