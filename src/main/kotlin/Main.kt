@@ -69,15 +69,16 @@ fun main() {
 
     val allCodes = codes + emptyCodes
 
-    // --- гиперпинвильные параметры оракула — через конструктор ---
+    // === ВАЖНО: параметры оракула под ГИПЕРПИНВИЛ ===
+    // угол доминирует, позиция – мягкий модификатор
     val layout = DampLayout2D(
         allCodes,
-        maxAngleDeg = 180.0,
-        posRangeFrac = 0.5,
-        sigmaAngleDeg = 25.0,
-        sigmaPos = 6.0,
-        angleWeight = 0.25,
-        posWeight = 1.5,
+        maxAngleDeg = 180.0,   // как было, период по углу
+        posRangeFrac = 1.0,    // позиции нормализуются мягко (не разлетаются в 4 острова)
+        sigmaAngleDeg = 28.0,  // умеренно широкий по углу
+        sigmaPos = 24.0,       // ШИРОКАЯ гауссиана по позиции → 4 позиции почти слиты
+        angleWeight = 1.0,     // угол – главный
+        posWeight = 0.25       // позиция – слабый, но ненулевой вклад
     )
 
     println("Total non-empty protos = ${codes.size}, total codes (with empties) = ${allCodes.size}")
@@ -110,12 +111,12 @@ fun main() {
 
     val cpuTime = measureTime {
         val outCPU = layout.layoutLongRange(
-            farRadius = layout.gridSize / 2,
+            farRadius = layout.gridSize / 2, // даём глобальную перестановку по всей решётке
             epochs = 100,
             minSim = 0.0,
             lambdaStart = 0.30,
             lambdaEnd = 0.90,
-            eta = 0.95,
+            eta = 0.85,          // оракул остаётся сильным, но не 100%
             maxBatchFrac = 0.30,
             log = true
         )
@@ -137,7 +138,7 @@ fun main() {
             val (yb, xb) = bCoord
             val dy = ya - yb
             val dx = xa - xb
-            val dist = sqrt((dx * dx + dy * dy).toDouble())
+            val dist = kotlin.math.sqrt((dx * dx + dy * dy).toDouble())
 
             println(
                 "$label:\n" +
